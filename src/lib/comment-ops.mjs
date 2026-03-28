@@ -117,9 +117,28 @@ async function waitForCommentStatusFilter(page, options) {
 export async function captureCommentListFingerprint(page) {
   return page.evaluate(() => {
     const normalize = (value = "") => value.replace(/\s+/g, " ").trim();
+    const collectCommentNodes = () => {
+      const explicitNodes = Array.from(document.querySelectorAll("[comment-item]")).filter(
+        (node) => node instanceof HTMLElement
+      );
+      if (explicitNodes.length > 0) {
+        return explicitNodes;
+      }
 
-    return Array.from(document.querySelectorAll("[comment-item], div.container-sXKyMs"))
-      .filter((node) => node instanceof HTMLElement)
+      return Array.from(document.querySelectorAll("div, section, article")).filter((node) => {
+        if (!(node instanceof HTMLElement)) {
+          return false;
+        }
+        const text = normalize(node.innerText || node.textContent || "");
+        if (!text || !text.includes("回复")) {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 280 && rect.height >= 50 && text.length <= 4000;
+      });
+    };
+
+    return collectCommentNodes()
       .slice(0, 5)
       .map((node) => normalize((node.innerText || node.textContent || "").slice(0, 160)))
       .filter(Boolean)
@@ -251,7 +270,29 @@ export async function applyUnrepliedCommentsFilter(page, options) {
             }
 
             const currentFingerprint = Array.from(
-              document.querySelectorAll("[comment-item], div.container-sXKyMs")
+              (function collectCommentNodes() {
+                const explicitNodes = Array.from(document.querySelectorAll("[comment-item]")).filter(
+                  (node) => node instanceof HTMLElement
+                );
+                if (explicitNodes.length > 0) {
+                  return explicitNodes;
+                }
+
+                const normalizeText = (value = "") => value.replace(/\s+/g, " ").trim();
+                return Array.from(document.querySelectorAll("div, section, article")).filter(
+                  (node) => {
+                    if (!(node instanceof HTMLElement)) {
+                      return false;
+                    }
+                    const text = normalizeText(node.innerText || node.textContent || "");
+                    if (!text || !text.includes("回复")) {
+                      return false;
+                    }
+                    const rect = node.getBoundingClientRect();
+                    return rect.width >= 280 && rect.height >= 50 && text.length <= 4000;
+                  }
+                );
+              })()
             )
               .filter((node) => node instanceof HTMLElement)
               .slice(0, 5)

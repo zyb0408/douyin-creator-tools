@@ -307,6 +307,7 @@ async function safeReplyToComment(page, commentLocator, comment, options) {
     const sendButton = commentLocator.getByText("发送", { exact: true }).first();
     stage = "click_send_button";
     await sendButton.click();
+    await page.waitForTimeout(1000);
     logReplyFilterDebug("clicked send button", {
       username: comment.username,
       commentText: comment.commentText

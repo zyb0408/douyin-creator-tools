@@ -89,44 +89,57 @@ export async function extractCommentSnapshot(page) {
         return null;
       }
 
-      const contentNode = Array.from(block.children).find(
-        (child) =>
-          child instanceof HTMLElement && child.classList.contains("content-FM0UMi")
-      );
-      if (!(contentNode instanceof HTMLElement)) {
+      const candidates = Array.from(block.querySelectorAll("div, span, p"))
+        .filter((node) => node instanceof HTMLElement)
+        .map((node) => ({
+          node,
+          text: normalize(node.textContent || "")
+        }))
+        .filter((item) => item.text)
+        .slice(0, 120);
+      if (candidates.length === 0) {
         return null;
       }
 
-      const contentHost =
-        Array.from(contentNode.children).find((child) => child instanceof HTMLElement) ||
-        contentNode;
-      if (!(contentHost instanceof HTMLElement)) {
-        return null;
-      }
+      const lineSet = new Set(splitLines(block.innerText || ""));
+      const textRows = Array.from(lineSet).slice(0, 40);
 
-      const directChildren = Array.from(contentHost.children).filter(
-        (child) => child instanceof HTMLElement
-      );
-      const usernameNode = directChildren.find((child) =>
-        child.classList.contains("username-aLgaNB")
-      );
-      const timeNode = directChildren.find((child) =>
-        child.classList.contains("time-NRtTXO")
-      );
-      const commentNode = directChildren.find((child) =>
-        child.classList.contains("comment-content-text-JvmAKq")
-      );
+      const usernameText =
+        textRows.find((line) => {
+          if (!line || line.length > 40) {
+            return false;
+          }
+          if (metaPattern.test(line) || replyThreadPattern.test(line) || controlPattern.test(line)) {
+            return false;
+          }
+          return true;
+        }) || "";
 
-      const usernameText = normalize(usernameNode?.innerText || "");
-      const commentText = normalize(commentNode?.innerText || "") || (
-        commentNode?.querySelector("img") ? "[image]" : ""
-      );
-      if (!usernameText || !commentText) {
-        return null;
+      const publishText =
+        textRows.find((line) => metaPattern.test(line) && !controlPattern.test(line)) || "";
+
+      let commentText =
+        textRows.find((line) => {
+          if (!line || line === usernameText || line === publishText) {
+            return false;
+          }
+          if (metaPattern.test(line) || replyThreadPattern.test(line) || controlPattern.test(line)) {
+            return false;
+          }
+          return true;
+        }) || "";
+
+      if (!commentText) {
+        const imageLikeNode = candidates.find(({ node }) => node.querySelector("img"));
+        if (imageLikeNode) {
+          commentText = "[image]";
+        }
       }
 
       const username = normalizeNameLine(usernameText);
-      const publishText = normalize(timeNode?.innerText || "");
+      if (!username || !commentText) {
+        return null;
+      }
 
       return {
         entry: {
@@ -147,25 +160,6 @@ export async function extractCommentSnapshot(page) {
     }
 
     const collectBlocks = () => {
-      const classBlocks = Array.from(root.querySelectorAll("div.container-sXKyMs")).filter(
-        (node) => {
-          if (!(node instanceof HTMLElement)) {
-            return false;
-          }
-
-          const text = normalize(node.innerText || "");
-          if (!text || !text.includes("回复")) {
-            return false;
-          }
-
-          const rect = node.getBoundingClientRect();
-          return rect.width >= 300 && rect.height >= 60;
-        }
-      );
-      if (classBlocks.length > 0) {
-        return classBlocks;
-      }
-
       const explicitBlocks = Array.from(root.querySelectorAll("[comment-item]"));
       if (explicitBlocks.length > 0) {
         return explicitBlocks;
