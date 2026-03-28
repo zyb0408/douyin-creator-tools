@@ -11,7 +11,8 @@
     "comments:export-all": "node ./src/export-all-douyin-comments.mjs",
     "comments:reply": "node ./src/reply-douyin-comments.mjs",
     "article:publish": "node ./src/publish-douyin-article.mjs",
-    "server": "PORT=8765 node ./src/server.mjs"
+    "server": "PORT=8765 node ./src/server.mjs",
+    "wordcloud": "node ./src/compute-wordcloud.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
