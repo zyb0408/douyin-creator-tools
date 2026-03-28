@@ -8,10 +8,14 @@
     "view": "node ./src/open-douyin-view.mjs",
     "works": "node ./src/list-douyin-works.mjs",
     "comments:export": "node ./src/export-douyin-comments.mjs",
+    "comments:export-all": "node ./src/export-all-douyin-comments.mjs",
     "comments:reply": "node ./src/reply-douyin-comments.mjs",
-    "article:publish": "node ./src/publish-douyin-article.mjs"
+    "article:publish": "node ./src/publish-douyin-article.mjs",
+    "server": "PORT=8765 node ./src/server.mjs"
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "express": "^5.2.1",
     "playwright": "^1.52.0"
   }
 }

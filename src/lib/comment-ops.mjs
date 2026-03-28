@@ -191,9 +191,54 @@ export async function getCommentTerminalIndicator(page) {
         text.includes(indicator.text)
       );
 
-      if (matchedIndicator) {
+      if (!matchedIndicator) {
+        continue;
+      }
+
+      // "暂无符合条件的评论" is always a genuine terminal state
+      if (matchedIndicator.kind === "no_matching_comments_indicator") {
         return matchedIndicator;
       }
+
+      // "没有更多评论" can appear on an infinite-scroll sentinel element
+      // (e.g. class="loading-NTmKHl") that is always visible at the bottom of
+      // the current batch. Only treat it as a genuine terminal once:
+      //   (a) There are truly no comment items at all (empty list), OR
+      //   (b) The marked scroll container has scrollable content AND scrollTop
+      //       has actually reached the bottom.
+      // Determine whether any comment content is actually rendered.
+      // The page may not use [comment-item] attributes, so fall back to
+      // detecting "回复" buttons (each root comment has one).
+      const hasCommentItems = document.querySelectorAll("[comment-item]").length > 0;
+      const hasReplyButtons = Array.from(
+        document.querySelectorAll("button, div, span")
+      ).some((n) => (n.textContent || "").trim() === "回复");
+      const hasComments = hasCommentItems || hasReplyButtons;
+
+      if (!hasComments) {
+        // Page is genuinely empty — no comments at all.
+        return matchedIndicator;
+      }
+
+      const scrollContainer = document.querySelector('[data-codex-comment-scroll="true"]');
+      if (!scrollContainer) {
+        // Can't verify scroll position; rely on stall-detection to stop instead.
+        continue;
+      }
+
+      const scrollableHeight = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      if (scrollableHeight <= 20) {
+        // Container has no scrollable room (wrong container or fits in viewport).
+        // Can't use scroll position to confirm end; rely on stall-detection.
+        continue;
+      }
+
+      const atBottom = scrollContainer.scrollTop >= scrollableHeight - 20;
+      if (!atBottom) {
+        continue;
+      }
+
+      return matchedIndicator;
     }
 
     return null;
@@ -521,9 +566,15 @@ export async function advanceCommentScroll(page, scrollContainer, options = {}) 
   });
 }
 
+
 export async function collectComments(page, options) {
-  logReplyFilterDebug("entering unreplied collection flow");
-  await applyUnrepliedCommentsFilter(page, options);
+  const filterMode = options.filterMode ?? "unreplied";
+  if (filterMode === "all") {
+    logReplyFilterDebug("entering all-comments collection flow, filter already applied via page reload");
+  } else {
+    logReplyFilterDebug("entering unreplied collection flow");
+    await applyUnrepliedCommentsFilter(page, options);
+  }
 
   await waitForCommentsArea(page, options);
 
@@ -554,7 +605,7 @@ export async function collectComments(page, options) {
     const previousFingerprint = await captureCommentListFingerprint(page);
     const scrollState = await advanceCommentScroll(page, scrollContainer);
 
-    await waitForCommentListChange(page, previousFingerprint, 1200);
+    await waitForCommentListChange(page, previousFingerprint, 2500);
 
     const postScrollSnapshot = await extractCommentSnapshot(page);
     const postScrollAdditions = addCommentsFromSnapshot(commentsBySignature, postScrollSnapshot);
@@ -582,7 +633,7 @@ export async function collectComments(page, options) {
       break;
     }
 
-    if (stalledScrollAttempts >= 4) {
+    if (stalledScrollAttempts >= 6) {
       break;
     }
 

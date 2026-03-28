@@ -1,6 +1,23 @@
 import { promptForEnter } from "../douyin-browser.mjs";
 import { getEffectiveTimeout } from "./common.mjs";
 
+/**
+ * Hard-refresh the current page by first clearing the browser HTTP cache via CDP
+ * (equivalent to Ctrl+Shift+R) and then reloading.  Falls back to a normal
+ * reload if the CDP session cannot be established.
+ */
+export async function hardRefreshPage(page, options = {}) {
+  const navigationTimeoutMs = getEffectiveTimeout(options, options.navigationTimeoutMs ?? 60000);
+  try {
+    const cdpSession = await page.context().newCDPSession(page);
+    await cdpSession.send("Network.clearBrowserCache");
+    await cdpSession.detach();
+  } catch {
+    // CDP not available — fall through to normal reload
+  }
+  await page.reload({ waitUntil: "domcontentloaded", timeout: navigationTimeoutMs });
+}
+
 export async function ensureCommentPageReady(page, pageUrl, options) {
   const navigationTimeoutMs = getEffectiveTimeout(options, options.navigationTimeoutMs);
   const uiTimeoutMs = getEffectiveTimeout(options, options.uiTimeoutMs);

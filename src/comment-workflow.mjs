@@ -9,8 +9,12 @@ import {
   getEffectiveTimeout,
   setReplyFilterDebugEnabled
 } from "./lib/common.mjs";
-import { ensureCommentPageReady } from "./lib/comment-page.mjs";
-import { collectComments } from "./lib/comment-ops.mjs";
+import { ensureCommentPageReady, hardRefreshPage } from "./lib/comment-page.mjs";
+import {
+  captureCommentListFingerprint,
+  collectComments,
+  waitForCommentListChange
+} from "./lib/comment-ops.mjs";
 import { replyToComments } from "./lib/reply-flow.mjs";
 import { emitResult, loadReplyCommentsFile } from "./lib/result-store.mjs";
 import {
@@ -19,6 +23,7 @@ import {
   getSelectedWorkOutput,
   getWorksOutput
 } from "./lib/works-panel.mjs";
+import { upsertComments } from "./lib/db-ops.mjs";
 
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 60000;
 const DEFAULT_UI_TIMEOUT_MS = 30000;
@@ -30,7 +35,7 @@ const DEFAULT_REPLY_TIMEOUT_MS = 30000;
 const DEFAULT_REPLY_SETTLE_MS = 1800;
 const DEFAULT_REPLY_TYPE_DELAY_MS = 100;
 const DEFAULT_REPLY_LIMIT = 20;
-const DEFAULT_EXPORT_LIMIT = 200;
+const DEFAULT_EXPORT_LIMIT = 5000;
 const DEFAULT_REPLY_FLOW_TIMEOUT_MS = 1800000;
 const REPLY_FLOW_TIMEOUT_BUFFER_MS = 60000;
 const REPLY_FLOW_TIMEOUT_PER_PLAN_MS = 20000;
@@ -39,6 +44,9 @@ const MAX_AUTO_REPLY_FLOW_TIMEOUT_MS = 7200000;
 export const DEFAULT_WORKS_OUTPUT_PATH = path.resolve("comments-output/list-works.json");
 export const DEFAULT_EXPORT_OUTPUT_PATH = path.resolve(
   "comments-output/unreplied-comments.json"
+);
+export const DEFAULT_EXPORT_ALL_OUTPUT_PATH = path.resolve(
+  "comments-output/all-comments.json"
 );
 export const DEFAULT_REPLY_OUTPUT_PATH = path.resolve(
   "comments-output/reply-comments-result.json"
@@ -166,9 +174,11 @@ export async function exportUnrepliedComments(options = {}) {
       uiTimeoutMs: DEFAULT_UI_TIMEOUT_MS
     });
 
+    const selectedWorkOutput = getSelectedWorkOutput(targetWork) ?? { title: "" };
+
     await emitResult(
       {
-        selectedWork: getSelectedWorkOutput(targetWork) ?? { title: "" },
+        selectedWork: selectedWorkOutput,
         count: comments.length,
         comments: comments.map((comment) => ({
           username: comment.username,
@@ -178,6 +188,89 @@ export async function exportUnrepliedComments(options = {}) {
       },
       outputPath
     );
+
+    try {
+      upsertComments(selectedWorkOutput.title, comments.map((c) => ({
+        username: c.username,
+        commentText: c.commentText,
+        replyMessage: null
+      })));
+    } catch (dbError) {
+      console.warn(`[db] 写入评论失败（不影响主流程）: ${dbError?.message ?? dbError}`);
+    }
+  } finally {
+    await context.close();
+  }
+}
+
+export async function exportAllComments(options = {}) {
+  if (!options.workTitle) {
+    throw new Error("Missing work title. Usage: npm run comments:export-all -- \"作品短标题\"");
+  }
+
+  const outputPath = options.outputPath || DEFAULT_EXPORT_ALL_OUTPUT_PATH;
+  const { context, page, runtimeBudget } = await openCommentSession(options);
+
+  try {
+    // 强制刷新（清空 HTTP 缓存，等价于 Ctrl+Shift+R），确保拿到最新评论数据。
+    // 必须在选作品之前刷新，刷新后 SPA 状态重置，选作品后不再刷新。
+    await hardRefreshPage(page, {
+      navigationTimeoutMs: DEFAULT_NAVIGATION_TIMEOUT_MS
+    });
+    // 刷新后等"选择作品"按钮出现，确认页面已恢复就绪
+    await page
+      .locator('button:has-text("选择作品"), [role="button"]:has-text("选择作品")')
+      .first()
+      .waitFor({ state: "visible", timeout: DEFAULT_UI_TIMEOUT_MS });
+
+    // 等页面自动加载默认作品的评论（最多 8 秒），拿到稳定「旧指纹」
+    await waitForCommentListChange(page, "", 8000).catch(() => {});
+    const preSelectionFingerprint = await captureCommentListFingerprint(page).catch(() => "");
+
+    const targetWork = await resolveTargetWork(
+      page,
+      runtimeBudget,
+      options.workTitle,
+      options.workPublishText || ""
+    );
+
+    console.log(`已选中作品：${getSelectedWorkOutput(targetWork).title}`);
+
+    // 等评论列表从「旧指纹」切换到目标作品内容
+    await waitForCommentListChange(page, preSelectionFingerprint, 10000).catch(() => {});
+
+    const comments = await collectComments(page, {
+      ...runtimeBudget,
+      filterMode: "all",
+      limit: options.limit || DEFAULT_EXPORT_LIMIT,
+      timeoutMs: DEFAULT_COMMENTS_TIMEOUT_MS,
+      idleMs: DEFAULT_COMMENTS_IDLE_MS,
+      uiTimeoutMs: DEFAULT_UI_TIMEOUT_MS
+    });
+
+    const selectedWorkOutput = getSelectedWorkOutput(targetWork) ?? { title: "" };
+
+    await emitResult(
+      {
+        selectedWork: selectedWorkOutput,
+        count: comments.length,
+        comments: comments.map((comment) => ({
+          username: comment.username,
+          commentText: comment.commentText
+        }))
+      },
+      outputPath
+    );
+
+    try {
+      upsertComments(selectedWorkOutput.title, comments.map((c) => ({
+        username: c.username,
+        commentText: c.commentText,
+        replyMessage: null
+      })));
+    } catch (dbError) {
+      console.warn(`[db] 写入评论失败（不影响主流程）: ${dbError?.message ?? dbError}`);
+    }
   } finally {
     await context.close();
   }
@@ -225,12 +318,14 @@ export async function replyComments(options = {}) {
       uiTimeoutMs: DEFAULT_UI_TIMEOUT_MS
     });
 
+    const selectedWorkOutput = getSelectedWorkOutput(targetWork);
+
     await emitResult(
       {
         fetchedAt: new Date().toISOString(),
         mode: "reply_comments",
         pageUrl: options.pageUrl || DEFAULT_COMMENT_PAGE_URL,
-        selectedWork: getSelectedWorkOutput(targetWork),
+        selectedWork: selectedWorkOutput,
         replyCommentsFile: options.planFile,
         replyDryRun: Boolean(options.dryRun),
         replyLimit,
@@ -238,6 +333,17 @@ export async function replyComments(options = {}) {
       },
       outputPath
     );
+
+    try {
+      const dbRows = replyPlans.map((plan) => ({
+        username: plan.username,
+        commentText: plan.commentText,
+        replyMessage: plan.replyMessage
+      }));
+      upsertComments(selectedWorkOutput?.title ?? selectedWorkHint.title, dbRows);
+    } catch (dbError) {
+      console.warn(`[db] 写入回复失败（不影响主流程）: ${dbError?.message ?? dbError}`);
+    }
 
     if (keepBrowserOpenAfterRun) {
       await promptForEnter("流程已完成，检查浏览器现场后按 Enter 关闭浏览器");

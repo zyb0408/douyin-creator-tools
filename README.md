@@ -6,6 +6,7 @@
 - `npm run view`
 - `npm run works`
 - `npm run comments:export`
+- `npm run comments:export-all`
 - `npm run comments:reply`
 - `npm run article:publish`
 
@@ -64,6 +65,34 @@ npm run works
 ```
 
 `title` 会先去掉空白字符，再截取前 `15` 个字符。后续导出评论、回复评论都用这个短标题匹配作品。
+
+## 导出全部评论
+
+```bash
+npm run comments:export-all -- "作品标题短键"
+```
+
+默认输出到 `comments-output/all-comments.json`，可通过 `--out <path>` 指定路径
+
+输出示例：
+
+```json
+{
+  "selectedWork": {
+    "title": "作品标题短键",
+    "publishText": "发布于 2026-03-18"
+  },
+  "count": 5,
+  "comments": [
+    {
+      "username": "用户A",
+      "commentText": "评论内容"
+    }
+  ]
+}
+```
+
+只导出 `username`（网友id）和 `commentText`（评论内容），不包含回复状态。
 
 ## 导出未回复评论
 
