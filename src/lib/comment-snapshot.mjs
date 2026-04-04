@@ -24,6 +24,23 @@ export async function extractCommentSnapshot(page) {
 
     const isNoiseLine = (line) => controlPattern.test(line) || pureNumberPattern.test(line);
 
+    const fullText = (el) => {
+      let t = "";
+      for (const node of el.childNodes) {
+        if (node.nodeType === 3) {
+          t += node.textContent || "";
+        } else if (node.nodeType === 1) {
+          const elem = node;
+          if (elem.tagName === "IMG") {
+            t += elem.getAttribute("alt") || "";
+          } else {
+            t += fullText(elem);
+          }
+        }
+      }
+      return t;
+    };
+
     const parseStructuredEntry = (rawLines, order) => {
       const lines = rawLines.filter((line) => !isNoiseLine(line));
       if (lines.length < 2) {
@@ -89,6 +106,39 @@ export async function extractCommentSnapshot(page) {
         return null;
       }
 
+      const textRows = Array.from(new Set(splitLines(block.innerText || ""))).slice(0, 40);
+      const publishText =
+        textRows.find((line) => metaPattern.test(line) && !controlPattern.test(line)) || "";
+
+      // --- Targeted path: use Douyin's class selectors + fullText() ---
+      const commentContentEl = block.querySelector('div[class*="comment-content-text-"]');
+      if (commentContentEl) {
+        const commentText = normalize(fullText(commentContentEl));
+
+        const usernameEl = block.querySelector('div[class*="username-"]');
+        let username = "";
+        if (usernameEl) {
+          for (const node of usernameEl.childNodes) {
+            if (node.nodeType === 3) username += node.textContent || "";
+          }
+          username = normalizeNameLine(username);
+        }
+
+        if (username && commentText) {
+          return {
+            entry: {
+              username,
+              commentText,
+              publishText,
+              consumedLineCount: 0,
+              order,
+              signature: [username, commentText, publishText].map(normalize).join("|")
+            }
+          };
+        }
+      }
+
+      // --- Generic fallback: text-line parsing ---
       const candidates = Array.from(block.querySelectorAll("div, span, p"))
         .filter((node) => node instanceof HTMLElement)
         .map((node) => ({
@@ -101,9 +151,6 @@ export async function extractCommentSnapshot(page) {
         return null;
       }
 
-      const lineSet = new Set(splitLines(block.innerText || ""));
-      const textRows = Array.from(lineSet).slice(0, 40);
-
       const usernameText =
         textRows.find((line) => {
           if (!line || line.length > 40) {
@@ -114,9 +161,6 @@ export async function extractCommentSnapshot(page) {
           }
           return true;
         }) || "";
-
-      const publishText =
-        textRows.find((line) => metaPattern.test(line) && !controlPattern.test(line)) || "";
 
       let commentText =
         textRows.find((line) => {
@@ -130,9 +174,19 @@ export async function extractCommentSnapshot(page) {
         }) || "";
 
       if (!commentText) {
-        const imageLikeNode = candidates.find(({ node }) => node.querySelector("img"));
-        if (imageLikeNode) {
-          commentText = "[image]";
+        const stickerImgs = Array.from(block.querySelectorAll("img")).filter((img) => {
+          if (img.closest('[class*="avatar" i]')) return false;
+          const src = (img.getAttribute("src") || "").toLowerCase();
+          if (src.includes("avatar")) return false;
+          const rect = img.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && rect.width <= 120 && rect.height <= 120;
+        });
+
+        if (stickerImgs.length > 0) {
+          const altTexts = stickerImgs
+            .map((img) => (img.getAttribute("alt") || "").trim())
+            .filter(Boolean);
+          commentText = altTexts.length > 0 ? altTexts.join("") : "[表情]";
         }
       }
 
@@ -216,42 +270,110 @@ export async function extractCommentSnapshot(page) {
       return blocks;
     };
 
-    const rawBlocks = collectBlocks()
-      .map((block, domIndex) => {
-        if (block instanceof HTMLElement) {
-          block.setAttribute("data-codex-comment-block", String(domIndex));
+    const collectViaContentSelectors = () => {
+      const contentEls = Array.from(
+        root.querySelectorAll('div[class*="comment-content-text-"]')
+      );
+      if (contentEls.length === 0) return null;
+
+      const blocks = [];
+      for (let i = 0; i < contentEls.length; i++) {
+        const contentEl = contentEls[i];
+
+        let container = contentEl.parentElement;
+        for (let j = 0; j < 8 && container && container !== root; j++) {
+          if (container.querySelector('div[class*="username-"]')) break;
+          container = container.parentElement;
+        }
+        if (!container) continue;
+
+        const usernameEl = container.querySelector('div[class*="username-"]');
+        if (!usernameEl) continue;
+
+        let username = "";
+        for (const node of usernameEl.childNodes) {
+          if (node.nodeType === 3) username += node.textContent || "";
+        }
+        username = normalizeNameLine(username);
+
+        const commentText = normalize(fullText(contentEl));
+        if (!username || !commentText) continue;
+
+        const containerRows = Array.from(
+          new Set(splitLines(container.innerText || ""))
+        ).slice(0, 40);
+        const publishText =
+          containerRows.find(
+            (line) => metaPattern.test(line) && !controlPattern.test(line)
+          ) || "";
+
+        const rect = contentEl.getBoundingClientRect();
+        const signature = [username, commentText, publishText]
+          .map(normalize)
+          .join("|");
+
+        if (container instanceof HTMLElement) {
+          container.setAttribute("data-codex-comment-block", String(i));
         }
 
-        const rawLines = splitLines(block.innerText || "");
+        blocks.push({
+          domIndex: i,
+          left: Number.isFinite(rect?.left) ? rect.left : 0,
+          top: Number.isFinite(rect?.top) ? rect.top : i,
+          entry: {
+            username,
+            commentText,
+            publishText,
+            consumedLineCount: 0,
+            order: i,
+            signature
+          }
+        });
+      }
 
-        if (rawLines.length === 0) {
-          return null;
-        }
+      return blocks.length > 0 ? blocks : null;
+    };
 
-        const rect = block instanceof HTMLElement ? block.getBoundingClientRect() : null;
-        const structuredBlock = extractStructuredEntryFromBlock(block, domIndex);
-        if (structuredBlock) {
+    const collectViaBlocks = () =>
+      collectBlocks()
+        .map((block, domIndex) => {
+          if (block instanceof HTMLElement) {
+            block.setAttribute("data-codex-comment-block", String(domIndex));
+          }
+
+          const rawLines = splitLines(block.innerText || "");
+
+          if (rawLines.length === 0) {
+            return null;
+          }
+
+          const rect =
+            block instanceof HTMLElement ? block.getBoundingClientRect() : null;
+          const structuredBlock = extractStructuredEntryFromBlock(block, domIndex);
+          if (structuredBlock) {
+            return {
+              domIndex,
+              left: Number.isFinite(rect?.left) ? rect.left : 0,
+              top: Number.isFinite(rect?.top) ? rect.top : domIndex,
+              entry: structuredBlock.entry
+            };
+          }
+
+          const mainEntry = parseStructuredEntry(rawLines, domIndex);
+          if (!mainEntry) {
+            return null;
+          }
+
           return {
             domIndex,
             left: Number.isFinite(rect?.left) ? rect.left : 0,
             top: Number.isFinite(rect?.top) ? rect.top : domIndex,
-            entry: structuredBlock.entry
+            entry: mainEntry
           };
-        }
+        })
+        .filter(Boolean);
 
-        const mainEntry = parseStructuredEntry(rawLines, domIndex);
-        if (!mainEntry) {
-          return null;
-        }
-
-        return {
-          domIndex,
-          left: Number.isFinite(rect?.left) ? rect.left : 0,
-          top: Number.isFinite(rect?.top) ? rect.top : domIndex,
-          entry: mainEntry
-        };
-      })
-      .filter(Boolean);
+    const rawBlocks = collectViaContentSelectors() ?? collectViaBlocks();
 
     const resolveReplyIndentThreshold = (blocks) => {
       const leftPositions = blocks

@@ -17,6 +17,7 @@ Usage:
 Options:
   --limit <n>                Max exported comments (default: 5000)
   --out <path>               Output JSON path (default: comments-output/all-comments.json)
+  --no-history               Skip exporting user history
   --work-publish-text <text> Work publish text for disambiguation
   --profile <path>           Playwright profile path
   --timeout <ms>             Max total runtime
@@ -32,6 +33,7 @@ function parseArgs(argv) {
     workTitle: "",
     workPublishText: "",
     limit: 5000,
+    noHistory: false,
     outputPath: DEFAULT_EXPORT_ALL_OUTPUT_PATH
   };
 
@@ -59,6 +61,9 @@ function parseArgs(argv) {
       case "--work-publish-text":
         args.workPublishText = normalizeText(argv[index + 1] ?? "");
         index += 1;
+        break;
+      case "--no-history":
+        args.noHistory = true;
         break;
       default:
         if (!arg.startsWith("-") && !args.workTitle) {

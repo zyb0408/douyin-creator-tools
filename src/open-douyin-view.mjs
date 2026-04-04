@@ -7,11 +7,10 @@ import {
   DEFAULT_USER_DATA_DIR,
   gotoPage,
   launchPersistentPage,
+  parseViewport,
   promptForEnter
 } from "./douyin-browser.mjs";
 import { toPositiveInteger } from "./lib/common.mjs";
-
-const DEFAULT_VIEWPORT = { width: 1440, height: 900 };
 
 function printHelp() {
   console.log(`
@@ -24,6 +23,7 @@ Options:
   --profile <path>   Playwright profile path
   --timeout <ms>     Max wait for initial page navigation (default: 60000)
   --zoom <percent>   Page zoom percentage after open (default: 80)
+  --viewport <WxH>   Browser viewport size, e.g. 1440x900 (default: auto-fit screen)
   --headless         Run Chromium in headless mode
   --help             Print this help
   `);
@@ -47,6 +47,7 @@ function parseArgs(argv) {
     profileDir: DEFAULT_USER_DATA_DIR,
     timeoutMs: 60000,
     zoomPercent: 80,
+    viewport: null,
     headless: false
   };
 
@@ -71,6 +72,10 @@ function parseArgs(argv) {
         break;
       case "--zoom":
         args.zoomPercent = toPositiveInteger(argv[index + 1], "--zoom");
+        index += 1;
+        break;
+      case "--viewport":
+        args.viewport = parseViewport(argv[index + 1]);
         index += 1;
         break;
       case "--headless":
@@ -99,7 +104,7 @@ async function main() {
   const { context, page } = await launchPersistentPage({
     userDataDir: args.profileDir,
     headless: args.headless,
-    viewport: DEFAULT_VIEWPORT,
+    viewport: args.viewport,
     alwaysNewPage: true
   });
 
@@ -111,9 +116,10 @@ async function main() {
         document.documentElement.style.zoom = String(zoom);
       }, args.zoomPercent);
     }
+    const vpLabel = args.viewport ? `${args.viewport.width}x${args.viewport.height}` : "自适应屏幕";
     console.log(`已打开新的标签页：${args.pageUrl}`);
     console.log(`正在复用登录信息目录：${args.profileDir}`);
-    console.log(`浏览器视口：${DEFAULT_VIEWPORT.width}x${DEFAULT_VIEWPORT.height}`);
+    console.log(`浏览器视口：${vpLabel}`);
     console.log(`页面缩放：${args.zoomPercent}%`);
     await promptForEnter("手动处理完成后，回到终端按 Enter 关闭浏览器");
   } finally {

@@ -175,12 +175,15 @@ export async function exportUnrepliedComments(options = {}) {
     });
 
     const selectedWorkOutput = getSelectedWorkOutput(targetWork) ?? { title: "" };
+    const includeHistory = !options.noHistory;
 
     // 在写入当前批次之前查询历史 & 回复次数，确保数据只含过去记录
     let historyMap = new Map();
     let replyCountMap = new Map();
     try {
-      historyMap = getUserHistoryMap(comments.map((c) => c.username));
+      if (includeHistory) {
+        historyMap = getUserHistoryMap(comments.map((c) => c.username));
+      }
       replyCountMap = getReplyCountMap(selectedWorkOutput.title, comments.map((c) => ({
         username: c.username,
         commentText: c.commentText
@@ -203,12 +206,17 @@ export async function exportUnrepliedComments(options = {}) {
       {
         selectedWork: selectedWorkOutput,
         count: exportComments.length,
-        comments: exportComments.map((comment) => ({
-          username: comment.username,
-          commentText: comment.commentText,
-          replyMessage: "",
-          history: historyMap.get(comment.username) ?? []
-        }))
+        comments: exportComments.map((comment) => {
+          const entry = {
+            username: comment.username,
+            commentText: comment.commentText,
+            replyMessage: ""
+          };
+          if (includeHistory) {
+            entry.history = historyMap.get(comment.username) ?? [];
+          }
+          return entry;
+        })
       },
       outputPath
     );
@@ -273,12 +281,15 @@ export async function exportAllComments(options = {}) {
     });
 
     const selectedWorkOutput = getSelectedWorkOutput(targetWork) ?? { title: "" };
+    const includeHistory = !options.noHistory;
 
     // 在写入当前批次之前查询历史 & 回复次数，确保数据只含过去记录
     let historyMap = new Map();
     let replyCountMap = new Map();
     try {
-      historyMap = getUserHistoryMap(comments.map((c) => c.username));
+      if (includeHistory) {
+        historyMap = getUserHistoryMap(comments.map((c) => c.username));
+      }
       replyCountMap = getReplyCountMap(selectedWorkOutput.title, comments.map((c) => ({
         username: c.username,
         commentText: c.commentText
@@ -301,11 +312,16 @@ export async function exportAllComments(options = {}) {
       {
         selectedWork: selectedWorkOutput,
         count: exportComments.length,
-        comments: exportComments.map((comment) => ({
-          username: comment.username,
-          commentText: comment.commentText,
-          history: historyMap.get(comment.username) ?? []
-        }))
+        comments: exportComments.map((comment) => {
+          const entry = {
+            username: comment.username,
+            commentText: comment.commentText
+          };
+          if (includeHistory) {
+            entry.history = historyMap.get(comment.username) ?? [];
+          }
+          return entry;
+        })
       },
       outputPath
     );

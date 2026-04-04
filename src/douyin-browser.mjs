@@ -7,7 +7,7 @@ export const DEFAULT_COMMENT_PAGE_URL =
   "https://creator.douyin.com/creator-micro/interactive/comment";
 export const DEFAULT_USER_DATA_DIR = path.resolve(".playwright/douyin-profile");
 
-const DEFAULT_VIEWPORT = { width: 1440, height: 1200 };
+const DEFAULT_VIEWPORT = null;
 
 export async function promptForEnter(message) {
   const terminal = readline.createInterface({
@@ -22,6 +22,13 @@ export async function promptForEnter(message) {
   }
 }
 
+export function parseViewport(value) {
+  if (!value || value === "auto") return null;
+  const match = String(value).match(/^(\d+)[xX×](\d+)$/);
+  if (!match) throw new Error(`Invalid viewport format: "${value}" (expected WIDTHxHEIGHT, e.g. 1440x900)`);
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
 export async function launchPersistentPage(options = {}) {
   const {
     userDataDir = DEFAULT_USER_DATA_DIR,
@@ -30,10 +37,14 @@ export async function launchPersistentPage(options = {}) {
     alwaysNewPage = false
   } = options;
 
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless,
-    viewport
-  });
+  const launchOptions = { headless };
+  if (viewport) {
+    launchOptions.viewport = viewport;
+  } else {
+    launchOptions.viewport = null;
+  }
+
+  const context = await chromium.launchPersistentContext(userDataDir, launchOptions);
   const page = alwaysNewPage
     ? await context.newPage()
     : context.pages()[0] ?? (await context.newPage());

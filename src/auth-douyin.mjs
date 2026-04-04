@@ -7,6 +7,7 @@ import {
   DEFAULT_USER_DATA_DIR,
   gotoPage,
   launchPersistentPage,
+  parseViewport,
   promptForEnter
 } from "./douyin-browser.mjs";
 import { toPositiveInteger } from "./lib/common.mjs";
@@ -20,6 +21,7 @@ Options:
   --url <url>        Login page URL (default: creator comment page)
   --profile <path>   Playwright profile path
   --timeout <ms>     Max wait for initial page navigation (default: 60000)
+  --viewport <WxH>   Browser viewport size, e.g. 1440x900 (default: auto-fit screen)
   --help             Print this help
   `);
 }
@@ -28,7 +30,8 @@ function parseArgs(argv) {
   const args = {
     pageUrl: DEFAULT_COMMENT_PAGE_URL,
     profileDir: DEFAULT_USER_DATA_DIR,
-    timeoutMs: 60000
+    timeoutMs: 60000,
+    viewport: null
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -48,6 +51,10 @@ function parseArgs(argv) {
         break;
       case "--timeout":
         args.timeoutMs = toPositiveInteger(argv[index + 1], "--timeout");
+        index += 1;
+        break;
+      case "--viewport":
+        args.viewport = parseViewport(argv[index + 1]);
         index += 1;
         break;
       default:
@@ -80,7 +87,8 @@ async function main() {
   }
 
   const { context, page } = await launchPersistentPage({
-    userDataDir: args.profileDir
+    userDataDir: args.profileDir,
+    viewport: args.viewport
   });
 
   try {

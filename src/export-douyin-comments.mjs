@@ -17,6 +17,7 @@ Usage:
 Options:
   --limit <n>        Max exported comments (default: 200)
   --out <path>       Output JSON path (default: comments-output/unreplied-comments.json)
+  --no-history       Skip exporting user history
   --profile <path>   Playwright profile path
   --timeout <ms>     Max total runtime
   --headless         Run Chromium in headless mode
@@ -30,6 +31,7 @@ function parseArgs(argv) {
     ...createSharedCliArgs(),
     workTitle: "",
     limit: 200,
+    noHistory: false,
     outputPath: DEFAULT_EXPORT_OUTPUT_PATH
   };
 
@@ -53,6 +55,9 @@ function parseArgs(argv) {
       case "--out":
         args.outputPath = argv[index + 1] ?? DEFAULT_EXPORT_OUTPUT_PATH;
         index += 1;
+        break;
+      case "--no-history":
+        args.noHistory = true;
         break;
       default:
         if (!arg.startsWith("-") && !args.workTitle) {
