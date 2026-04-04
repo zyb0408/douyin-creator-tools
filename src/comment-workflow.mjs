@@ -191,14 +191,14 @@ export async function exportUnrepliedComments(options = {}) {
       console.warn(`[db] 查询历史/回复次数失败（不影响主流程）: ${dbError?.message ?? dbError}`);
     }
 
-    // 过滤掉已回复次数 >= 2 的评论
+    // 过滤掉已回复过的评论（reply_count >= 1）
     const exportComments = comments.filter((c) => {
       const count = replyCountMap.get(`${c.username}|||${c.commentText}`) ?? 0;
-      return count < 2;
+      return count < 1;
     });
     const skipped = comments.length - exportComments.length;
     if (skipped > 0) {
-      console.log(`[db] 过滤掉 ${skipped} 条回复次数 >= 2 的评论`);
+      console.log(`[db] 过滤掉 ${skipped} 条已回复过的评论`);
     }
 
     await emitResult(
@@ -303,14 +303,14 @@ export async function exportAllComments(options = {}) {
       console.warn(`[db] 查询历史/回复次数失败（不影响主流程）: ${dbError?.message ?? dbError}`);
     }
 
-    // 过滤掉已回复次数 >= 2 的评论
+    // 过滤掉已回复过的评论（reply_count >= 1）
     const exportComments = comments.filter((c) => {
       const count = replyCountMap.get(`${c.username}|||${c.commentText}`) ?? 0;
-      return count < 2;
+      return count < 1;
     });
     const skipped = comments.length - exportComments.length;
     if (skipped > 0) {
-      console.log(`[db] 过滤掉 ${skipped} 条回复次数 >= 2 的评论`);
+      console.log(`[db] 过滤掉 ${skipped} 条已回复过的评论`);
     }
 
     await emitResult(
@@ -361,7 +361,7 @@ export async function replyComments(options = {}) {
     throw new Error("Reply plan file must contain selectedWork.title.");
   }
 
-  // 过滤掉 reply_count > 2 的评论（已尝试回复超过 2 次，不再重复）
+  // 过滤掉已回复过的评论（reply_count >= 1）
   let replyPlans = allReplyPlans;
   try {
     const replyCountMap = getReplyCountMap(
@@ -374,14 +374,14 @@ export async function replyComments(options = {}) {
     const skippedByCount = [];
     replyPlans = allReplyPlans.filter((plan) => {
       const count = replyCountMap.get(`${plan.username}|||${plan.commentText}`) ?? 0;
-      if (count > 2) {
+      if (count >= 1) {
         skippedByCount.push({ username: plan.username, replyCount: count });
         return false;
       }
       return true;
     });
     if (skippedByCount.length > 0) {
-      console.log(`[db] 跳过 ${skippedByCount.length} 条回复次数 > 2 的评论`);
+      console.log(`[db] 跳过 ${skippedByCount.length} 条已回复过的评论`);
     }
   } catch (dbError) {
     console.warn(`[db] 查询回复次数失败（继续使用全部计划）: ${dbError?.message ?? dbError}`);
