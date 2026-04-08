@@ -368,8 +368,11 @@ async function runPublishFlow(page, articleInput, args) {
     return;
   }
 
+  // name 默认子串匹配，「高清发布」也会命中；必须 exact 只点主「发布」
   console.log("点击发布");
-  await page.getByRole("button", { name: "发布" }).first().click();
+  const publishBtn = page.getByRole("button", { name: "发布", exact: true }).first();
+  await publishBtn.scrollIntoViewIfNeeded();
+  await publishBtn.click();
   await page.waitForTimeout(3000);
   console.log("发布流程已执行完成");
 
