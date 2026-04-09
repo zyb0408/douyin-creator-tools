@@ -580,7 +580,24 @@ export async function collectComments(page, options) {
     );
   } else {
     logReplyFilterDebug("entering unreplied collection flow");
-    await applyUnrepliedCommentsFilter(page, options);
+    const FILTER_PROBE_TIMEOUT_MS = 5000;
+    const filterAvailable = await waitForAsyncCondition(
+      page,
+      FILTER_PROBE_TIMEOUT_MS,
+      async () => Boolean(await markCommentStatusFilter(page)),
+      200
+    );
+
+    if (filterAvailable) {
+      await applyUnrepliedCommentsFilter(page, options);
+    } else {
+      const OLD_WORK_COLLECT_LIMIT = 10;
+      console.log(
+        `[comment] 未找到评论状态过滤下拉框（旧作品可能没有此功能），仅采集前 ${OLD_WORK_COLLECT_LIMIT} 条评论`
+      );
+      logReplyFilterDebug("unreplied filter not available, falling back to current comment list");
+      options = { ...options, limit: OLD_WORK_COLLECT_LIMIT };
+    }
   }
 
   await waitForCommentsArea(page, options);
