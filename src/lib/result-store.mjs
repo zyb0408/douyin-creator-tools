@@ -4,7 +4,8 @@ import {
   canonicalWorkTitle,
   logReplyFilterDebug,
   normalizeText,
-  normalizeUsername
+  normalizeUsername,
+  repairJsonFieldQuotes
 } from "./common.mjs";
 
 function normalizeSelectedWorkHint(rawWork) {
@@ -109,17 +110,18 @@ function describeJsonParseError(rawContent, error) {
 
 export async function loadReplyCommentsFile(replyCommentsFile) {
   const rawContent = await fs.readFile(replyCommentsFile, "utf8");
+  const repairedContent = repairJsonFieldQuotes(rawContent);
   let parsed;
 
   try {
-    parsed = JSON.parse(rawContent);
-  } catch (originalError) {
+    parsed = JSON.parse(repairedContent);
+  } catch (fieldRepairError) {
     try {
       parsed = JSON.parse(tryRepairJson(rawContent));
       console.warn(`[warn] JSON 文件包含未转义的引号，已自动修复: ${replyCommentsFile}`);
     } catch (_repairError) {
       throw new Error(
-        `JSON 解析失败: ${replyCommentsFile}\n  ${describeJsonParseError(rawContent, originalError)}`
+        `JSON 解析失败: ${replyCommentsFile}\n  ${describeJsonParseError(rawContent, fieldRepairError)}`
       );
     }
   }

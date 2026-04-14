@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-13
+
+### JSON 解析
+
+- 发布文章、发布图文、回复评论读取 JSON 时，自动将 title / subtitle / content / description / replyMessage 字段值内的英文双引号替换为中文引号（`""`），避免因未转义引号导致解析失败
+
 ## 2026-04-09
 
 ### 发布图文

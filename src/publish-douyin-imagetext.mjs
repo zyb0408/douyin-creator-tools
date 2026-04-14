@@ -10,6 +10,7 @@ import {
   promptForEnter
 } from "./douyin-browser.mjs";
 import { createSharedCliArgs, consumeSharedCliArg } from "./cli-options.mjs";
+import { repairJsonFieldQuotes } from "./lib/common.mjs";
 
 const DEFAULT_PAGE_URL =
   "https://creator.douyin.com/creator-micro/content/upload?default-tab=3";
@@ -104,9 +105,11 @@ function readImageTextInput(inputFile) {
     return { errors };
   }
 
+  const repairedContent = repairJsonFieldQuotes(rawContent);
+
   let parsed;
   try {
-    parsed = JSON.parse(rawContent);
+    parsed = JSON.parse(repairedContent);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     const posMatch = msg.match(/position\s+(\d+)/i);

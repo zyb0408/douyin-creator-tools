@@ -209,6 +209,46 @@ export function sanitizeCollectedComment(comment) {
   return rest;
 }
 
+const REPAIRABLE_FIELDS_PATTERN =
+  /^(\s*"(?:title|subtitle|content|description|replyMessage)"\s*:\s*")(.*)("\s*,?\s*)$/;
+
+/**
+ * 逐行扫描 JSON 文本，对 title / subtitle / content / description / replyMessage
+ * 字段值内部的英文双引号替换为中文引号 \u201C\u201D，使 JSON.parse 不会因未转义引号而失败。
+ * 判断逻辑：行首匹配 `"fieldName": "` 、行尾匹配 `",` 或 `"` ，中间部分的 `"` 即为需要替换的内嵌引号。
+ */
+export function repairJsonFieldQuotes(rawText) {
+  const lines = rawText.split("\n");
+  let repaired = false;
+
+  const fixedLines = lines.map((line) => {
+    const m = line.match(REPAIRABLE_FIELDS_PATTERN);
+    if (!m) return line;
+
+    const prefix = m[1];
+    const value = m[2];
+    const suffix = m[3];
+
+    if (!value.includes('"')) return line;
+
+    let isOpen = true;
+    const fixedValue = value.replace(/"/g, () => {
+      const ch = isOpen ? "\u201C" : "\u201D";
+      isOpen = !isOpen;
+      return ch;
+    });
+
+    repaired = true;
+    return prefix + fixedValue + suffix;
+  });
+
+  if (repaired) {
+    console.warn("[warn] JSON 字段值中包含英文双引号，已自动替换为中文引号");
+  }
+
+  return fixedLines.join("\n");
+}
+
 const zhSegmenter = new Intl.Segmenter("zh-CN", { granularity: "word" });
 
 function segmentWords(text) {
