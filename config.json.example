@@ -1,0 +1,28 @@
+{
+  "llm": {
+    "baseURL": "https://api.openai.com/v1",
+    "apiKey": "replace-with-your-api-key",
+    "model": "gpt-4o-mini",
+    "temperature": 0.7,
+    "maxTokens": 300
+  },
+  "schedule": {
+    "enabled": true,
+    "cron": "0 */2 * * *",
+    "runOnStartup": false
+  },
+  "task": {
+    "workTitle": "作品标题关键词",
+    "workPublishText": "",
+    "exportLimit": 50,
+    "replyLimit": 20,
+    "autoReply": true,
+    "dryRun": false,
+    "headless": true,
+    "includeHistory": true
+  },
+  "paths": {
+    "exportFile": "comments-output/unreplied-comments.json",
+    "planFile": "comments-output/generated-reply-plan.json"
+  }
+}

@@ -17,6 +17,8 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+config.json
+!config.json.example
 
 # Playwright local browser state
 .playwright/
