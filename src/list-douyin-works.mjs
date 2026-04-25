@@ -25,7 +25,7 @@ Options:
 function parseArgs(argv) {
   const args = {
     ...createSharedCliArgs(),
-    limit: 0,
+    limit: 5,
     outputPath: DEFAULT_WORKS_OUTPUT_PATH
   };
 
@@ -68,12 +68,14 @@ function parseArgs(argv) {
         break;
     }
   }
+    console.log('[DEBUG] 最终 args:', args); // ← 调试用
 
   return args;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+    console.log('[DEBUG] 解析后的参数:', args); // ← 添加这一行！
 
   if (args.help) {
     printHelp();

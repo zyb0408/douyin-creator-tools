@@ -304,7 +304,7 @@ async function selectTargetWorkFromCurrentScan(page, sideSheet, targetWork, opti
 }
 
 async function fetchAllWorks(page, options) {
-  const limit = Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
+  const limit = Number.isInteger(options.limit) && options.limit > 0 ? options.limit : 5;
   const sideSheet = await openWorksSideSheet(page, options);
   const timeoutMs = getEffectiveTimeout(options, options.timeoutMs);
   const startedAt = Date.now();
