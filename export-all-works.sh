@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# export-all-works.sh — 批量导出所有作品的评论
+# export-all-works.sh — 批量导出作品评论
 # 用法：bash export-all-works.sh
 #       bash export-all-works.sh --headless   # 无头模式
+#       bash export-all-works.sh --latest 5   # 仅处理最近 5 个作品
 
 set -uo pipefail
 
@@ -11,10 +12,30 @@ cd "$SCRIPT_DIR"
 WORKS_FILE="list-works.json"
 OUTPUT_DIR="comments-output/all-works"
 HEADLESS_FLAG=""
+LATEST_COUNT=""
 
-for arg in "$@"; do
-  case "$arg" in
-    --headless) HEADLESS_FLAG="--headless" ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --headless)
+      HEADLESS_FLAG="--headless"
+      shift
+      ;;
+    --latest)
+      LATEST_COUNT="${2:-}"
+      if [[ -z "$LATEST_COUNT" || ! "$LATEST_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+        echo "错误：--latest 需要传入正整数，例如 --latest 5"
+        exit 1
+      fi
+      shift 2
+      ;;
+    --help|-h)
+      echo "用法：bash export-all-works.sh [--headless] [--latest N]"
+      exit 0
+      ;;
+    *)
+      echo "错误：未知参数 $1"
+      exit 1
+      ;;
   esac
 done
 
@@ -37,6 +58,11 @@ PYEOF
 )
 
 TOTAL=$(echo "$works_data" | grep -c '.' || true)
+if [[ -n "$LATEST_COUNT" && "$LATEST_COUNT" -lt "$TOTAL" ]]; then
+  works_data=$(echo "$works_data" | head -n "$LATEST_COUNT")
+  TOTAL="$LATEST_COUNT"
+fi
+
 SUCCESS=0
 FAILED=0
 FAILED_TITLES=()
@@ -47,6 +73,7 @@ echo " 批量导出作品评论"
 echo " 作品总数：$TOTAL"
 echo " 输出目录：$OUTPUT_DIR"
 [[ -n "$HEADLESS_FLAG" ]] && echo " 模式：无头"
+[[ -n "$LATEST_COUNT" ]] && echo " 范围：最近 $LATEST_COUNT 个作品"
 echo "========================================"
 echo ""
 

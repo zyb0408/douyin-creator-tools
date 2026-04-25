@@ -197,12 +197,14 @@ export async function listWorks(options = {}) {
       idleMs: DEFAULT_WORKS_IDLE_MS,
       uiTimeoutMs: DEFAULT_UI_TIMEOUT_MS
     });
+    const limitedWorks =
+      Number.isInteger(options.limit) && options.limit > 0 ? works.slice(0, options.limit) : works;
 
     await emitResult(
       {
         pageUrl: options.pageUrl || DEFAULT_COMMENT_PAGE_URL,
-        count: works.length,
-        works: getWorksOutput(works)
+        count: limitedWorks.length,
+        works: getWorksOutput(limitedWorks)
       },
       outputPath
     );

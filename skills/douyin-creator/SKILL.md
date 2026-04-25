@@ -19,6 +19,7 @@ metadata: {"Hermes":{"requires":{"bins":["node","npm","npx"]}}}
 
 ```bash
 cd "$PROJECT_DIR" && npm run works
+cd "$PROJECT_DIR" && npm run works -- --limit 5
 ```
 
 输出 `$PROJECT_DIR/comments-output/list-works.json`：
@@ -26,6 +27,8 @@ cd "$PROJECT_DIR" && npm run works
 ```json
 { "count": 2, "works": [{ "title": "作品标题" }] }
 ```
+
+- `--limit N` 可选，只保留当前列表里最新的前 N 个作品；例如只处理最近 5 个作品时先运行 `npm run works -- --limit 5`
 
 ## 工作流 2：导出未回复评论
 
@@ -54,6 +57,15 @@ cd "$PROJECT_DIR" && npm run comments:export -- "<作品标题>"
 ```
 
 `imagePaths` 仅在评论带图时出现。`replyMessage` 初始为空字符串。
+
+如果需要批量遍历多个作品导出未回复评论，优先使用仓库脚本并限制范围，避免扫描全部作品：
+
+```bash
+cd "$PROJECT_DIR" && node ./scripts/export-all-unreplied.mjs --latest 5
+```
+
+- `--latest 5` 表示只处理 `list-works.json` 中最新的 5 个作品
+- 若要跳过最新几个后再处理，可用 `--offset <n> --latest <m>`
 
 ## 工作流 3：批量回复
 

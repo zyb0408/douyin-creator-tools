@@ -42,6 +42,19 @@ git clone https://github.com/wenyg/douyin-creator-tools.git
 
 `npm run` 的参数一定放在 `--` 之后，否则被 npm 吞掉。
 
+作品很多时，可以先只取最近 N 个作品，避免后续批处理扫全量：
+
+```bash
+cd "$PROJECT_DIR" && npm run works -- --limit 5
+```
+
+仓库里的批量导出脚本也支持只处理最近 N 个作品：
+
+```bash
+cd "$PROJECT_DIR" && node ./scripts/export-all-unreplied.mjs --latest 5
+cd "$PROJECT_DIR" && bash ./export-all-works.sh --latest 5
+```
+
 ## 硬约束
 
 - 不绕过登录、验证码、平台风控
