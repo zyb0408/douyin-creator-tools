@@ -1,20 +1,20 @@
 # douyin-creator-tools
 
-> 本文件面向 OpenClaw, OpenClaw 读到此仓库时按本文件指引操作。
-> 碳基生物读到此文件时可以将本仓库地址丢给 OpenClaw, 让 OpenClaw 来加载此技能
+> 本文件面向 Hermes, Hermes 读到此仓库时按本文件指引操作。
+> 碳基生物读到此文件时可以将本仓库地址丢给 Hermes, 让 Hermes 来加载此技能
 
-本仓库基于 Playwright 做抖音创作者中心自动化，供 OpenClaw 通过内置 skill 调度。覆盖三件事：获取作品列表、导出指定作品的未回复评论、按 JSON 批量回复评论。
+本仓库基于 Playwright 做抖音创作者中心自动化，供 Hermes 通过内置 skill 调度。覆盖三件事：获取作品列表、导出指定作品的未回复评论、按 JSON 批量回复评论。
 
 ## 仓库位置
 
-固定 clone 到 OpenClaw 目录下：
+固定 clone 到 Hermes 目录下：
 
 ```bash
-cd ~/.openclaw
+cd ~/Desktop/hermes_workspace/dev
 git clone https://github.com/wenyg/douyin-creator-tools.git
 ```
 
-下文 `$PROJECT_DIR = ~/.openclaw/douyin-creator-tools`。Skill 文件位于 `$PROJECT_DIR/skills/douyin-creator/`，由 OpenClaw 加载（加载机制由 OpenClaw 自行处理，无需人工配置）。
+下文 `$PROJECT_DIR = ~/Desktop/hermes_workspace/dev/douyin-creator-tools`。Skill 文件位于 `$PROJECT_DIR/skills/douyin-creator/`，由 Hermes 加载（加载机制由 Hermes 自行处理，无需人工配置）。
 
 ## 首次初始化
 

@@ -2,7 +2,7 @@
 name: douyin-creator
 description: "抖音（Douyin）创作者中心作品与评论自动化：获取已发布作品列表、导出指定作品的未回复评论、按 JSON 批量回复评论。当用户提到 抖音 / Douyin / 创作者中心 / 作品列表 / 导出评论 / 回复评论 / 未回复评论 / 批量回复 时触发。"
 user-invocable: true
-metadata: {"openclaw":{"requires":{"bins":["node","npm","npx"]}}}
+metadata: {"Hermes":{"requires":{"bins":["node","npm","npx"]}}}
 ---
 
 # douyin-creator
@@ -11,7 +11,7 @@ metadata: {"openclaw":{"requires":{"bins":["node","npm","npx"]}}}
 
 ## 项目根
 
-`$PROJECT_DIR = ~/.openclaw/douyin-creator-tools`（仓库固定 clone 到此位置）。
+`$PROJECT_DIR = ~/Desktop/hermes_workspace/dev/douyin-creator-tools`（仓库固定 clone 到此位置）。
 
 依赖安装、Chromium 安装、扫码登录等**初始化步骤不在本 skill 范围**，由 `$PROJECT_DIR/README.md` 负责。命令执行时报「需要登录 / 跳转到登录页 / 找不到 chromium / 缺依赖」等环境问题时，**停止执行**并要求用户按 README 完成对应初始化，不要自作主张替用户安装或登录。
 
