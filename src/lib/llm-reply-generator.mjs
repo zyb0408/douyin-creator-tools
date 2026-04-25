@@ -1,6 +1,8 @@
+#!/usr/bin/env node
 import fs from "node:fs/promises";
 import { emitResult } from "./result-store.mjs";
 import { normalizeText } from "./common.mjs";
+import path from "node:path";
 
 const MAX_REPLY_MESSAGE_CHARS = 400;
 const MAX_HISTORY_ITEMS = 3;
@@ -42,7 +44,7 @@ function replaceStraightDoubleQuotes(text) {
 function sanitizeReplyMessage(rawText) {
   const normalized = normalizeText(
     String(rawText ?? "")
-      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/<[\\s\\S]*?<\/think>/gi, "")
       .replace(/^here'?s a thinking process:?.*$/gim, ""),
   )
     .replace(/\r?\n+/g, " ")
@@ -127,6 +129,9 @@ async function loadReplySource(inputPath) {
 }
 
 async function generateSingleReply({ llmConfig, selectedWork, comment }) {
+  console.log(`[DEBUG] 调用 LLM 生成回复，模型: ${llmConfig.model}`);
+  console.log(`[DEBUG] 评论内容: ${comment.commentText.slice(0, 100)}${comment.commentText.length > 100 ? "..." : ""}`);
+
   const response = await globalThis.fetch(
     `${llmConfig.baseURL.replace(/\/$/, "")}/chat/completions`,
     {
@@ -164,69 +169,160 @@ async function generateSingleReply({ llmConfig, selectedWork, comment }) {
     throw new Error("LLM response does not contain choices[0].message.content");
   }
 
+  console.log(`[DEBUG] LLM 响应内容: ${text.slice(0, 100)}${text.length > 100 ? "..." : ""}`);
   return text;
 }
 
-export async function generateReplyPlan({ inputPath, outputPath, llmConfig }) {
-  const source = await loadReplySource(inputPath);
+export async function generateReplyPlan({ outputPath } = {}) { // ✅ 关键修复：添加默认空对象
+  const commentOutputDir = path.resolve("comments-output");
+  const configPath = path.resolve("config.json");
+
+  // === 日志：读取配置文件 ===
+  console.log(`[DEBUG] 尝试读取配置文件: ${configPath}`);
+  let config = null;
+  try {
+    const configContent = await fs.readFile(configPath, "utf8");
+    console.log(`[DEBUG] 配置文件内容: ${configContent.length} 字符`);
+    config = JSON.parse(configContent);
+    console.log(`[DEBUG] 配置文件解析成功`);
+  } catch (error) {
+    console.error(`[ERROR] 读取或解析 config.json 失败: ${error.message}`);
+    throw new Error("config.json 文件不存在或格式错误，请确保它位于项目根目录");
+  }
+
+  // === 验证并初始化配置 ===
+  if (!config.llm) {
+    throw new Error("config.json 中缺少 llm 配置");
+  }
+
+  const llmConfig = config.llm;
+  console.log(`[DEBUG] LLM 配置: baseURL=${llmConfig.baseURL}, model=${llmConfig.model}, apiKey=${llmConfig.apiKey.substring(0, 5)}...`);
+
+  // 安全获取 paths，如果不存在则使用默认值
+  const defaultPaths = {
+    planFile: "comments-output/generated-reply-plan.json",
+    exportFile: "comments-output/unreplied-comments.json"
+  };
+  const paths = config.paths || defaultPaths;
+  console.log(`[DEBUG] 使用输出路径: ${paths.planFile}`);
+
+  // === 日志：扫描评论文件 ===
+  console.log(`[DEBUG] 扫描评论文件目录: ${commentOutputDir}`);
+  const allFiles = await fs.readdir(commentOutputDir);
+  console.log(`[DEBUG] 目录内容: ${allFiles.join(", ")}`);
+
+  const commentFiles = [];
+  for (const file of allFiles) {
+    if (file.startsWith("unreplied-comments-") && file.endsWith(".json")) {
+      const filePath = path.resolve(commentOutputDir, file);
+      commentFiles.push(filePath);
+      console.log(`[DEBUG] 发现评论文件: ${file}`);
+    }
+  }
+
+  if (commentFiles.length === 0) {
+    console.error(`[ERROR] 未找到任何 unreplied-comments-*.json 文件，请先运行 'npm run comments:export'`);
+    throw new Error("没有找到任何未回复评论文件。请先运行 'npm run comments:export' 导出评论。");
+  }
+
+  console.log(`[INFO] 找到 ${commentFiles.length} 个未回复评论文件，开始处理...`);
 
   let generatedCount = 0;
   let skippedCount = 0;
   let failedCount = 0;
+  const allComments = [];
+  let selectedWork = null;
 
-  const comments = [];
+  // === 日志：遍历每个文件 ===
+  for (const filePath of commentFiles) {
+    console.log(`[INFO] 正在处理: ${path.basename(filePath)}`);
+    try {
+      const source = await loadReplySource(filePath);
+      if (!selectedWork) {
+        selectedWork = source.selectedWork;
+        console.log(`[DEBUG] 使用作品上下文: ${selectedWork.title}`);
+      }
+      console.log(`[DEBUG] 文件包含 ${source.comments.length} 条评论`);
 
-  for (const comment of source.comments) {
-    const nextComment = { ...comment };
-    const existingReply = normalizeText(String(comment?.replyMessage ?? ""));
-
-    if (existingReply) {
-      nextComment.replyMessage = existingReply;
-      comments.push(nextComment);
-      generatedCount += 1;
-      continue;
+      for (const comment of source.comments) {
+        if (normalizeText(comment.replyMessage)) {
+          allComments.push({ ...comment });
+          generatedCount += 1;
+          console.log(`[DEBUG] 跳过已生成回复的评论: ${comment.username}`);
+          continue;
+        }
+        const newComment = { ...comment };
+        allComments.push(newComment);
+      }
+    } catch (error) {
+      console.warn(`[WARNING] 处理文件 ${filePath} 时出错: ${error.message}`);
+      failedCount += 1;
     }
+  }
+
+  console.log(`[INFO] 共收集 ${allComments.length} 条待处理评论`);
+
+  // === 日志：逐条生成回复 ===
+  for (const comment of allComments) {
+    if (normalizeText(comment.replyMessage)) continue;
+
+    console.log(`[DEBUG] 正在为 ${comment.username} 生成回复: ${comment.commentText.slice(0, 50)}...`);
 
     try {
-      const text = await generateSingleReply({
-        llmConfig,
-        selectedWork: source.selectedWork,
-        comment,
-      });
-
+      const text = await generateSingleReply({ llmConfig, selectedWork, comment });
       const sanitized = sanitizeReplyMessage(text);
-      nextComment.replyMessage = sanitized.replyMessage;
+      comment.replyMessage = sanitized.replyMessage;
 
       if (sanitized.replyMessage) {
         generatedCount += 1;
+        console.log(`[DEBUG] 成功生成回复: ${sanitized.replyMessage.slice(0, 50)}...`);
       } else {
         skippedCount += 1;
+        console.log(`[DEBUG] 回复被过滤: ${sanitized.skipReason}`);
       }
     } catch (error) {
-      nextComment.replyMessage = "";
-      nextComment.llmError =
-        error instanceof Error ? error.message : String(error);
+      comment.replyMessage = "";
+      comment.llmError = error instanceof Error ? error.message : String(error);
       failedCount += 1;
+      console.error(`[ERROR] 生成回复失败: ${error.message}`);
     }
-
-    comments.push(nextComment);
   }
 
-  const plan = {
-    ...source,
-    comments,
-  };
+  // === 日志：输出结果 ===
+  const plan = { selectedWork, count: allComments.length, comments: allComments };
+  const finalOutputPath = outputPath || paths.planFile;
+  console.log(`[DEBUG] 将结果写入: ${finalOutputPath}`);
+  await emitResult(plan, finalOutputPath);
 
-  await emitResult(plan, outputPath);
+  console.log(`\n[RESULT] 生成回复计划完成！\n- 总评论数: ${allComments.length}\n- 已生成回复: ${generatedCount}\n- 跳过（无回复）: ${skippedCount}\n- 生成失败: ${failedCount}\n- 输出文件: ${finalOutputPath}`);
+
+  // === 新增：输出最终文件内容摘要 ===
+  const actionableCount = allComments.filter(c => normalizeText(c.replyMessage ?? "")).length;
+  console.log(`[RESULT] 可操作回复数: ${actionableCount}`);
+
+  // 仅当文件为空时输出完整内容用于调试
+  if (allComments.length === 0) {
+    console.error("[CRITICAL] 最终输出文件为空，请检查 comments-output/ 目录下是否有有效的 unreplied-comments-*.json 文件");
+  }
 
   return {
-    outputPath,
-    totalCount: comments.length,
+    outputPath: finalOutputPath,
+    totalCount: allComments.length,
     generatedCount,
     skippedCount,
     failedCount,
-    actionableCount: comments.filter((comment) =>
-      normalizeText(comment.replyMessage ?? ""),
-    ).length,
+    actionableCount
   };
 }
+
+// === 重要：显式调用函数以执行脚本 ===
+(async () => {
+  try {
+    console.log('[INFO] 开始执行 generateReplyPlan...');
+    await generateReplyPlan(); // ✅ 现在安全，即使不传参也不会报错
+    console.log('[INFO] 脚本执行完成');
+  } catch (error) {
+    console.error('[FATAL] 脚本执行失败:', error.message);
+    process.exitCode = 1;
+  }
+})();

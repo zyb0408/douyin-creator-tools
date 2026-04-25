@@ -271,6 +271,11 @@ export async function exportUnrepliedComments(options = {}) {
 
     await downloadCommentImages(exportComments, outputPath);
 
+    if (exportComments.length === 0) {
+      console.log(`[info] 作品 "${selectedWorkOutput.title}" 没有未回复的评论，不创建输出文件`);
+      return;
+    }
+
     await emitResult(
       {
         selectedWork: selectedWorkOutput,
