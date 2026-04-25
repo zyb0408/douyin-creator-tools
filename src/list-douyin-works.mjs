@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import process from "node:process";
-import { createSharedCliArgs, consumeSharedCliArg } from "./cli-options.mjs";
+import { createSharedCliArgs } from "./cli-options.mjs";
 import { DEFAULT_WORKS_OUTPUT_PATH, listWorks } from "./comment-workflow.mjs";
 import { toPositiveInteger } from "./lib/common.mjs";
 
@@ -31,11 +31,6 @@ function parseArgs(argv) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    const nextIndex = consumeSharedCliArg(args, argv, index);
-    if (nextIndex !== null) {
-      index = nextIndex;
-      continue;
-    }
 
     switch (arg) {
       case "--help":
@@ -46,12 +41,31 @@ function parseArgs(argv) {
         args.outputPath = argv[index + 1] ?? DEFAULT_WORKS_OUTPUT_PATH;
         index += 1;
         break;
-      case "--limit":
-        args.limit = toPositiveInteger(argv[index + 1], "--limit");
+      case "--profile":
+        args.profileDir = argv[index + 1] ?? "";
         index += 1;
         break;
+      case "--timeout":
+        args.timeoutMs = toPositiveInteger(argv[index + 1], "--timeout");
+        index += 1;
+        break;
+      case "--headless":
+        args.headless = true;
+        break;
+      case "--debug":
+        args.debug = true;
+        break;
       default:
-        throw new Error(`Unknown argument: ${arg}`);
+        // Handle --limit=5 or --limit 5
+        if (arg.startsWith("--limit=")) {
+          args.limit = toPositiveInteger(arg.substring("--limit=".length), "--limit");
+        } else if (arg === "--limit" && index + 1 < argv.length) {
+          args.limit = toPositiveInteger(argv[index + 1], "--limit");
+          index += 1;
+        } else {
+          throw new Error(`Unknown argument: ${arg}`);
+        }
+        break;
     }
   }
 

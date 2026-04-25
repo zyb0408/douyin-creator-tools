@@ -21,6 +21,9 @@ export function consumeSharedCliArg(args, argv, index) {
     case "--timeout":
       args.timeoutMs = toPositiveInteger(argv[index + 1], "--timeout");
       return index + 1;
+    case "--limit":
+      args.limit = toPositiveInteger(argv[index + 1], "--limit");
+      return index + 1;
     case "--headless":
       args.headless = true;
       return index;
