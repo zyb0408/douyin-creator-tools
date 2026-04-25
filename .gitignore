@@ -1,21 +1,42 @@
-node_modules/
-.playwright/
-comments-output/
-.history/
-.vscode/
-data/
-
-# Runtime data files
-comment.json
-works.json
-list-works.json
-*.log
-
-# SQLite
-*.db
-*.db-shm
-*.db-wal
-
-# OS
+# macOS / editor
 .DS_Store
-Thumbs.db
+.idea/
+.vscode/
+
+# dependencies
+node_modules/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# local environment
+.env
+.env.*
+!.env.example
+
+# Playwright local browser state
+.playwright/
+
+# generated exports
+comments-output/
+
+# generated local data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-journal
+
+# common build / coverage outputs
+coverage/
+dist/
+build/
+.cache/
+tmp/
+temp/
