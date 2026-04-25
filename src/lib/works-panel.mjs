@@ -304,6 +304,7 @@ async function selectTargetWorkFromCurrentScan(page, sideSheet, targetWork, opti
 }
 
 async function fetchAllWorks(page, options) {
+  const limit = Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
   const sideSheet = await openWorksSideSheet(page, options);
   const timeoutMs = getEffectiveTimeout(options, options.timeoutMs);
   const startedAt = Date.now();
@@ -324,6 +325,11 @@ async function fetchAllWorks(page, options) {
     }
 
     if (hasSignal && Date.now() - lastProgressAt >= options.idleMs) {
+      break;
+    }
+
+    // If limit is set and we have enough works, stop early
+    if (limit && domCount >= limit) {
       break;
     }
 
@@ -350,7 +356,7 @@ async function fetchAllWorks(page, options) {
   }
 
   const domFallbackWorks =
-    latestDomWorks.length > 0 ? latestDomWorks : await extractWorksFromSideSheet(sideSheet);
+    latestDomWorks.length > 0 ? latestDomWorks : await extractWorksFromSideSideSheet(sideSheet);
   if (domFallbackWorks.length > 0) {
     return domFallbackWorks;
   }
