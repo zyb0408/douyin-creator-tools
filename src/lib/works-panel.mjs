@@ -356,7 +356,7 @@ async function fetchAllWorks(page, options) {
   }
 
   const domFallbackWorks =
-    latestDomWorks.length > 0 ? latestDomWorks : await extractWorksFromSideSideSheet(sideSheet);
+    latestDomWorks.length > 0 ? latestDomWorks : await extractWorksFromSideSheet(sideSheet);
   if (domFallbackWorks.length > 0) {
     return domFallbackWorks;
   }
