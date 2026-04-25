@@ -1,94 +1,95 @@
 # 运行步骤指南
 
-## 快速开始
+## ✅ 一键全自动流程（推荐）
+
+执行以下命令，**一步完成全部操作**：
 
 ```bash
-cd ~/Desktop/hermes_workspace/dev/douyin-creator-tools
+chmod +x run-all.sh
+./run-all.sh
 ```
 
-## 1. 检查 Node.js 版本
+> ✅ 自动完成：获取作品 → 导出评论 → 生成AI回复 → 自动回复 → 清理中间文件
+> ✅ 所有评论都会被处理，无需手动指定作品
+> ✅ 每条回复自动追加：【沪上码仔AI自动回复，注意甄别】
+> ✅ 执行后自动清理所有中间文件，不留痕迹
+
+---
+
+## 📋 手动分步流程（调试用）
+
+### 1. 获取最新作品列表
 
 ```bash
-node -v  # 确保版本 >= 20.0.0
+npm run works
 ```
 
-## 2. 安装依赖
+**作用**：从抖音创作者中心获取最近的作品列表，生成 `comments-output/list-works.json` 文件，用于后续批量处理。
+
+---
+
+### 2. 导出所有作品的未回复评论
 
 ```bash
-npm install
+npm run comments:export
 ```
 
-## 3. 安装 Playwright Chromium
+**作用**：自动读取 `list-works.json` 中的所有作品标题，逐个登录抖音，导出每个作品的**未回复评论**，生成多个文件：
+- `unreplied-comments-作品标题.json`（每个作品一个）
+- **无未回复评论的作品，不会生成文件**
+
+> 💡 此步骤会创建大量文件，用于后续AI处理。
+
+---
+
+### 3. 生成AI回复内容
 
 ```bash
-npx playwright install chromium
+npm run comments:generate-reply
 ```
 
-## 4. 首次登录（必须用户亲自扫码）
+**作用**：
+- 读取 `comments-output/` 下所有 `unreplied-comments-*.json` 文件
+- 合并所有未回复评论，使用本地大模型（`config.json` 配置）逐条生成回复
+- 每条回复自动追加签名：`【沪上码仔AI自动回复，注意甄别】`
+- 输出统一文件：`comments-output/generated-reply-plan.json`
+
+> ⚠️ 此步骤会调用本地LLM，耗时取决于评论数量和模型响应速度。
+
+---
+
+### 4. 自动回复所有评论
 
 ```bash
-npm run auth
+npm run comments:reply-all
 ```
 
-## 5. 运行各个功能
+**作用**：
+- 读取 `generated-reply-plan.json` 中的全部评论
+- 按作品标题分组，**逐个作品**调用抖音客户端自动回复
+- 每个作品生成临时计划文件，回复完成后自动删除
+- 所有回复成功后，**自动清理**以下中间文件：
+  - `list-works.json`
+  - `unreplied-comments-*.json`
+  - `generated-reply-plan.json`
+  - `reply-comments-result.json`
+  - `all-comments.json`
 
-| 功能 | 命令 |
-|------|------|
-| 查看作品列表 | `npm run works` |
-| 导出作品未回复评论 | `npm run comments:export` （自动使用最新作品）或 `npm run comments:export -- "<作品标题>"` |
-| 生成评论回复（使用大模型） | `npm run comments:generate-reply` |
-| 批量回复评论 | `npm run comments:reply -- <plan.json>` |
-| 查看最近 N 个作品 | `npm run works -- --limit 5` |
-| 启动 API 服务 | `npm run server` |
+> ✅ 最终仅保留 `comment-images/`（如有），确保系统干净。
 
-## 完全自动化的完整工作流程
+---
 
-1. **获取最新作品列表**：
-   ```bash
-   npm run works
-   ```
-   生成文件：`comments-output/list-works.json`
+## 🛠 配置说明
 
-2. **导出所有作品的未回复评论**：
-   ```bash
-   npm run comments:export
-   ```
-   自动从 `list-works.json` 读取所有作品标题，逐个导出未回复评论：
-   - 对每个作品生成独立的输出文件，文件名格式：`unreplied-comments-作品标题.json`
-   - 如果某个作品没有未回复评论，系统将不创建文件并显示提示
-   - 处理完成后显示统计信息（处理了多少作品，成功导出了多少）
-   - 所有文件保存在 `comments-output/` 目录中
+- **LLM 配置**：修改 `config.json` 中的 `llm` 字段，设置你的本地模型地址、密钥和模型名
+- **回复签名**：在 `src/lib/llm-reply-generator.mjs` 中修改 `AI_SIGNATURE` 常量
+- **自动清理**：`reply-all-works.mjs` 中的 `CLEAN_FILES` 数组可自定义保留或删除的文件
 
-3. **生成回复内容（使用大模型）**：
-   ```bash
-   npm run comments:generate-reply
-   ```
-   读取 `comments-output/unreplied-comments.json`（最新作品的未回复评论），调用本地大模型API生成回复，生成 `comments-output/generated-reply-plan.json`
-   - 如果 `unreplied-comments.json` 不存在，`comments:generate-reply` 会提示错误
-   - 如果需要为特定作品生成回复：
-     1. 先运行 `npm run comments:export -- "作品标题"` 生成该作品的未回复评论文件
-     2. 将生成的文件（如 `unreplied-comments-作品标题.json`）复制为 `unreplied-comments.json`
-     3. 运行 `npm run comments:generate-reply`
-     
-     ```bash
-     cp "comments-output/unreplied-comments-作品标题.json" "comments-output/unreplied-comments.json"
-     npm run comments:generate-reply
-     ```
+## 💡 使用建议
 
-4. **自动回复评论**：
-   ```bash
-   npm run comments:reply -- comments-output/generated-reply-plan.json
-   ```
+- 首次使用请先手动执行 `npm run works` 和 `npm run comments:export`，确认能正常登录和获取数据
+- 确保 `config.json` 中的 `baseURL` 指向正在运行的本地大模型服务（如 http://127.0.0.1:8000/v1）
+- 不要清空 `.playwright/douyin-profile`，它保存了你的登录态
+- 推荐使用 `./run-all.sh` 作为日常执行命令，无需记忆复杂步骤
 
-> **提示**：
-> - 如果需要导出特定作品的评论，仍可使用 `npm run comments:export -- "作品标题"`
-> - `comments:generate-reply` 命令会自动读取 `config.json` 中的 LLM 配置，无需额外参数
-> - 所有中间文件都保存在 `comments-output/` 目录中，便于调试和重试
-> - 当没有未回复评论时，系统会跳过文件创建，避免无意义的空文件生成
-> - 如果需要导出所有作品的全部评论（包括已回复），请使用 `npm run comments:export-all -- "作品标题"` 命令
-
-## 注意事项
-
-- 参数一定要放在 `--` 之后，否则会被 npm 吞掉
-- 复用 `.playwright/douyin-profile` 登录态，不要清空或替换
-- 确保配置文件中 API 地址正确
+> 📌 所有中间文件都在 `comments-output/` 目录中，便于调试和重试。自动化流程结束后，该目录将被清空，仅保留图片。

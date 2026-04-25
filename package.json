@@ -23,6 +23,7 @@
     "comments:export-all": "node ./src/export-all-douyin-comments.mjs",
     "comments:generate-reply": "node ./src/lib/llm-reply-generator.mjs",
     "comments:reply": "node ./src/reply-douyin-comments.mjs",
+    "comments:reply-all": "node ./src/reply-all-works.mjs",
     "run:once": "node ./src/run-once.mjs",
     "run:scheduler": "node ./src/run-scheduler.mjs",
     "users": "node ./src/users.mjs",

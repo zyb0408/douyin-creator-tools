@@ -16,6 +16,10 @@ const BLOCKED_PATTERNS = [
   /\d{8,}/,
 ];
 
+// ✅ 新增：AI 自动回复签名
+const AI_SIGNATURE = "【沪上码仔AI自动回复，注意甄别】";
+const AI_SIGNATURE_LENGTH = AI_SIGNATURE.length;
+
 function truncateReplyMessage(text) {
   const source = String(text ?? "");
   const codePoints = [...source];
@@ -70,10 +74,24 @@ function sanitizeReplyMessage(rawText) {
     }
   }
 
+  // ✅ 在最终回复后追加签名，确保不超过最大长度
+  let finalText = text;
+  if (finalText.length + AI_SIGNATURE_LENGTH <= MAX_REPLY_MESSAGE_CHARS) {
+    finalText = finalText + AI_SIGNATURE;
+  } else {
+    // 如果空间不足，截断原文以容纳签名
+    const availableSpace = MAX_REPLY_MESSAGE_CHARS - AI_SIGNATURE_LENGTH;
+    if (availableSpace > 0) {
+      finalText = finalText.slice(0, availableSpace) + AI_SIGNATURE;
+    } else {
+      finalText = AI_SIGNATURE; // 极端情况：只保留签名
+    }
+  }
+
   return {
-    replyMessage: text,
+    replyMessage: finalText,
     skipReason: "",
-    truncated,
+    truncated: truncated || finalText.length > text.length,
   };
 }
 
@@ -173,7 +191,7 @@ async function generateSingleReply({ llmConfig, selectedWork, comment }) {
   return text;
 }
 
-export async function generateReplyPlan({ outputPath } = {}) { // ✅ 关键修复：添加默认空对象
+export async function generateReplyPlan({ outputPath } = {}) {
   const commentOutputDir = path.resolve("comments-output");
   const configPath = path.resolve("config.json");
 
@@ -319,7 +337,7 @@ export async function generateReplyPlan({ outputPath } = {}) { // ✅ 关键修�
 (async () => {
   try {
     console.log('[INFO] 开始执行 generateReplyPlan...');
-    await generateReplyPlan(); // ✅ 现在安全，即使不传参也不会报错
+    await generateReplyPlan();
     console.log('[INFO] 脚本执行完成');
   } catch (error) {
     console.error('[FATAL] 脚本执行失败:', error.message);
