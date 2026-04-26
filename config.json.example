@@ -4,7 +4,8 @@
     "apiKey": "replace-with-your-api-key",
     "model": "gpt-4o-mini",
     "temperature": 0.7,
-    "maxTokens": 300
+    "maxTokens": 300,
+    "aiSignature": "【沪上码仔AI自动回复，注意甄别】"
   },
   "schedule": {
     "enabled": true,

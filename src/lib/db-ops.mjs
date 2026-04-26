@@ -62,15 +62,32 @@ export function getReplyCountMap(workTitle, comments) {
   }
 
   const db = getDb();
-  const stmt = db.prepare(`
-    SELECT reply_count FROM comments
-    WHERE work_title = ? AND username = ? AND comment_text = ?
-  `);
+
+  // 构建 JSON 数组：每项为 [username, commentText]，用于 json_each() 批量查询
+  const jsonArray = JSON.stringify(
+    comments.map(({ username, commentText }) => [username, commentText])
+  );
+
+  // 使用 json_each() 一次性查询所有评论的回复次数，避免逐条查询
+  const rows = db
+    .prepare(
+      `
+    SELECT
+      c.value ->> 0 AS username,
+      c.value ->> 1 AS comment_text,
+      COALESCE(cm.reply_count, 0) AS reply_count
+    FROM json_each(?) AS c
+    LEFT JOIN comments cm
+      ON cm.work_title = ?
+     AND cm.username = c.value ->> 0
+     AND cm.comment_text = c.value ->> 1
+  `
+    )
+    .all(jsonArray, workTitle);
 
   const result = new Map();
-  for (const { username, commentText } of comments) {
-    const row = stmt.get(workTitle, username, commentText);
-    result.set(`${username}|||${commentText}`, row?.reply_count ?? 0);
+  for (const row of rows) {
+    result.set(`${row.username}|||${row.comment_text}`, row.reply_count);
   }
   return result;
 }

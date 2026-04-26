@@ -123,22 +123,38 @@ export function getTopCommenters(db, opts = {}) {
     activeUsers = new Set(activeRows.map((r) => r.username));
   }
 
-  const rows = db
-    .prepare(
-      `
-    SELECT username, comment_text
-    FROM comments
-    ORDER BY id ASC
-  `
-    )
-    .all();
+  // 构建 SQL 查询：当有 recentWorks 过滤时，仅查询活跃用户的评论，避免加载全库数据
+  let rows;
+  if (activeUsers) {
+    const usernames = [...activeUsers];
+    const placeholders = usernames.map(() => "?").join(",");
+    rows = db
+      .prepare(
+        `
+      SELECT username, comment_text
+      FROM comments
+      WHERE username IN (${placeholders})
+      ORDER BY id ASC
+    `
+      )
+      .all(...usernames);
+  } else {
+    rows = db
+      .prepare(
+        `
+      SELECT username, comment_text
+      FROM comments
+      ORDER BY id ASC
+    `
+      )
+      .all();
+  }
 
   /** @type {Map<string, Array<{ comment_text: string }>>} */
   const byUser = new Map();
   for (const row of rows) {
     const username = String(row.username ?? "").trim();
     if (!username) continue;
-    if (activeUsers && !activeUsers.has(username)) continue;
     if (!byUser.has(username)) {
       byUser.set(username, []);
     }

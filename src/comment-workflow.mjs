@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import crypto from "node:crypto";
 import path from "node:path";
 import {
   DEFAULT_COMMENT_PAGE_URL,
@@ -14,6 +12,24 @@ import {
   collectComments,
   waitForCommentListChange
 } from "./lib/comment-ops.mjs";
+import {
+  DEFAULT_COMMENTS_IDLE_MS,
+  DEFAULT_COMMENTS_TIMEOUT_MS,
+  DEFAULT_EXPORT_LIMIT,
+  DEFAULT_NAVIGATION_TIMEOUT_MS,
+  DEFAULT_REPLY_FLOW_TIMEOUT_MS,
+  DEFAULT_REPLY_LIMIT,
+  DEFAULT_REPLY_SETTLE_MS,
+  DEFAULT_REPLY_TIMEOUT_MS,
+  DEFAULT_REPLY_TYPE_DELAY_MS,
+  DEFAULT_UI_TIMEOUT_MS,
+  DEFAULT_WORKS_IDLE_MS,
+  DEFAULT_WORKS_TIMEOUT_MS,
+  MAX_AUTO_REPLY_FLOW_TIMEOUT_MS,
+  REPLY_FLOW_TIMEOUT_BUFFER_MS,
+  REPLY_FLOW_TIMEOUT_PER_PLAN_MS
+} from "./lib/constants.mjs";
+import { downloadCommentImages } from "./lib/image-downloader.mjs";
 import { replyToComments } from "./lib/reply-flow.mjs";
 import { emitResult, loadReplyCommentsFile } from "./lib/result-store.mjs";
 import {
@@ -28,22 +44,6 @@ import {
   incrementReplyCount,
   upsertComments
 } from "./lib/db-ops.mjs";
-
-const DEFAULT_NAVIGATION_TIMEOUT_MS = 60000;
-const DEFAULT_UI_TIMEOUT_MS = 30000;
-const DEFAULT_WORKS_TIMEOUT_MS = 45000;
-const DEFAULT_WORKS_IDLE_MS = 5000;
-const DEFAULT_COMMENTS_TIMEOUT_MS = 300000;
-const DEFAULT_COMMENTS_IDLE_MS = 5000;
-const DEFAULT_REPLY_TIMEOUT_MS = 30000;
-const DEFAULT_REPLY_SETTLE_MS = 1800;
-const DEFAULT_REPLY_TYPE_DELAY_MS = 50;
-const DEFAULT_REPLY_LIMIT = 20;
-const DEFAULT_EXPORT_LIMIT = 5000;
-const DEFAULT_REPLY_FLOW_TIMEOUT_MS = 1800000;
-const REPLY_FLOW_TIMEOUT_BUFFER_MS = 60000;
-const REPLY_FLOW_TIMEOUT_PER_PLAN_MS = 20000;
-const MAX_AUTO_REPLY_FLOW_TIMEOUT_MS = 7200000;
 
 export const DEFAULT_WORKS_OUTPUT_PATH = path.resolve("comments-output/list-works.json");
 export const DEFAULT_EXPORT_OUTPUT_PATH = path.resolve("comments-output/unreplied-comments.json");
@@ -77,70 +77,6 @@ function resolveReplyFlowTimeout(replyLimit, replyPlanCount) {
       REPLY_FLOW_TIMEOUT_BUFFER_MS + targetReplyCount * REPLY_FLOW_TIMEOUT_PER_PLAN_MS
     )
   );
-}
-
-function extractExtFromUrl(url) {
-  try {
-    const pathname = new URL(url).pathname;
-    const match = pathname.match(/\.(\w+)$/);
-    return match ? `.${match[1]}` : ".jpg";
-  } catch {
-    return ".jpg";
-  }
-}
-
-async function downloadCommentImages(comments, outputPath) {
-  const hasImages = comments.some((c) => c.imageUrls?.length > 0);
-  if (!hasImages) return;
-
-  const imageDir = path.resolve(path.dirname(outputPath), "comment-images");
-  await fs.promises.mkdir(imageDir, { recursive: true });
-
-  let downloaded = 0;
-  let failed = 0;
-
-  for (const comment of comments) {
-    if (!comment.imageUrls?.length) continue;
-    const savedPaths = [];
-
-    for (let i = 0; i < comment.imageUrls.length; i++) {
-      const url = comment.imageUrls[i];
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          console.warn(`[image] 下载失败 (HTTP ${response.status}): ${url.slice(0, 100)}…`);
-          failed += 1;
-          continue;
-        }
-
-        const buffer = Buffer.from(await response.arrayBuffer());
-        const ext = extractExtFromUrl(url);
-        const hash = crypto.createHash("md5").update(url).digest("hex").slice(0, 8);
-        const safeName = comment.username.replace(/[^\w\u4e00-\u9fff-]/g, "_").slice(0, 20);
-        const filename = `${safeName}_${i}_${hash}${ext}`;
-        const filePath = path.resolve(imageDir, filename);
-
-        await fs.promises.writeFile(filePath, buffer);
-        savedPaths.push(filePath);
-        downloaded += 1;
-      } catch (err) {
-        console.warn(`[image] 下载异常: ${err?.message ?? err}`);
-        failed += 1;
-      }
-    }
-
-    delete comment.imageUrls;
-    if (savedPaths.length > 0) {
-      comment.imagePaths = savedPaths;
-    }
-  }
-
-  if (downloaded > 0) {
-    console.log(`[image] 已下载 ${downloaded} 张评论图片至 ${imageDir}`);
-  }
-  if (failed > 0) {
-    console.warn(`[image] ${failed} 张图片下载失败`);
-  }
 }
 
 async function openCommentSession(options = {}) {
