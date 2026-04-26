@@ -10,7 +10,7 @@ import {
   promptForEnter
 } from "./douyin-browser.mjs";
 import { createSharedCliArgs, consumeSharedCliArg } from "./cli-options.mjs";
-import { repairJsonFieldQuotes } from "./lib/common.mjs";
+import { dismissPopups, selectMusic, readPublishInput } from "./lib/publish-utils.mjs";
 
 const DEFAULT_PAGE_URL =
   "https://creator.douyin.com/creator-micro/content/upload?default-tab=3";
@@ -83,51 +83,17 @@ function parseArgs(argv) {
 }
 
 function readImageTextInput(inputFile) {
-  const errors = [];
-
-  if (!inputFile) {
-    errors.push("缺少图文 JSON 文件参数。用法: npm run imagetext:publish -- imagetext.json");
-    return { errors };
-  }
-
-  if (!fs.existsSync(inputFile)) {
-    errors.push(`文件不存在: ${inputFile}`);
-    return { errors };
-  }
-
-  let rawContent;
-  try {
-    rawContent = fs.readFileSync(inputFile, "utf8");
-  } catch (error) {
-    errors.push(
-      `无法读取文件: ${inputFile} (${error instanceof Error ? error.message : String(error)})`
-    );
-    return { errors };
-  }
-
-  const repairedContent = repairJsonFieldQuotes(rawContent);
-
-  let parsed;
-  try {
-    parsed = JSON.parse(repairedContent);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    const posMatch = msg.match(/position\s+(\d+)/i);
-    let hint = msg;
-    if (posMatch) {
-      const pos = Number(posMatch[1]);
-      const before = rawContent.slice(Math.max(0, pos - 40), pos);
-      const after = rawContent.slice(pos, pos + 40);
-      hint = `${msg}\n    问题位置附近: ...${before}👉${after}...`;
+  // 使用通用的 JSON 读取+解析逻辑
+  const { errors: readErrors, parsed } = readPublishInput(inputFile);
+  if (readErrors.length > 0) {
+    // 补充更具体的用法提示
+    if (!inputFile) {
+      readErrors[0] = "缺少图文 JSON 文件参数。用法: npm run imagetext:publish -- imagetext.json";
     }
-    errors.push(`JSON 解析失败: ${hint}`);
-    return { errors };
+    return { errors: readErrors };
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    errors.push("JSON 内容应为一个对象 {...}，不能是数组或其他类型");
-    return { errors };
-  }
+  const errors = [];
 
   const title = String(parsed.title ?? "").trim();
   const description = String(parsed.description ?? "").trim();
@@ -164,18 +130,6 @@ function readImageTextInput(inputFile) {
     errors: [],
     data: { title, description, music, absoluteImagePaths, inputBaseDir }
   };
-}
-
-async function dismissPopups(page) {
-  for (let index = 0; index < 3; index += 1) {
-    const dismissButton = page.getByText("我知道了", { exact: true }).first();
-    const visible = await dismissButton.isVisible().catch(() => false);
-    if (!visible) {
-      break;
-    }
-    await dismissButton.click().catch(() => {});
-    await page.waitForTimeout(500);
-  }
 }
 
 async function navigateToUploadPage(page, args) {
@@ -234,84 +188,6 @@ async function fillTitleAndDescription(page, title, description) {
     await page.keyboard.type(trimmedDesc);
     await page.waitForTimeout(500);
   }
-}
-
-async function selectMusic(page, musicName) {
-  console.log(`选择配乐：${musicName}`);
-  await dismissPopups(page);
-
-  const musicButton = page.getByText("选择音乐").last();
-  await musicButton.scrollIntoViewIfNeeded();
-  await page.waitForTimeout(300);
-  await musicButton.click();
-  await page.waitForTimeout(2000);
-  await dismissPopups(page);
-
-  const searchInput = page
-    .locator('input[placeholder*="搜索"], input[placeholder*="音乐"]')
-    .first();
-  if (await searchInput.isVisible().catch(() => false)) {
-    await searchInput.fill(musicName);
-    await page.waitForTimeout(500);
-    await searchInput.press("Enter");
-  } else {
-    const fallbackInputs = await page.locator('input[type="search"], input[type="text"]').all();
-    let filled = false;
-    for (const input of fallbackInputs) {
-      if (await input.isVisible().catch(() => false)) {
-        await input.fill(musicName);
-        await page.waitForTimeout(500);
-        await input.press("Enter");
-        filled = true;
-        break;
-      }
-    }
-
-    if (!filled) {
-      throw new Error("Music search input was not found.");
-    }
-  }
-
-  await page.waitForTimeout(3000);
-  await dismissPopups(page);
-
-  const hiddenUseButton = page.locator('span.semi-button-content:text-is("使用")').first();
-  await hiddenUseButton.waitFor({ state: "attached", timeout: 10000 });
-
-  await page.evaluate(() => {
-    const fallbackButton = Array.from(document.querySelectorAll("span")).find(
-      (node) =>
-        node instanceof HTMLElement &&
-        node.className.includes("semi-button-content") &&
-        node.textContent?.trim() === "使用"
-    );
-    if (!(fallbackButton instanceof HTMLElement)) {
-      return false;
-    }
-
-    const row =
-      fallbackButton.closest('[class*="item"]') ||
-      fallbackButton.closest('[class*="row"]') ||
-      fallbackButton.parentElement?.parentElement?.parentElement;
-    if (!(row instanceof HTMLElement)) {
-      return false;
-    }
-
-    row.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-    row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-    return true;
-  });
-
-  await hiddenUseButton
-    .locator("xpath=ancestor::*[4]")
-    .hover()
-    .catch(() => {});
-  await page.waitForTimeout(500);
-
-  const useButton = page.getByText("使用", { exact: true }).first();
-  await useButton.waitFor({ state: "visible", timeout: 5000 });
-  await useButton.click();
-  await page.waitForTimeout(1000);
 }
 
 async function runPublishFlow(page, input, args) {

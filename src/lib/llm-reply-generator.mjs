@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
 import { emitResult } from "./result-store.mjs";
-import { normalizeText } from "./common.mjs";
+import { normalizeText, MAX_REPLY_MESSAGE_CHARS, truncateReplyMessage } from "./common.mjs";
 import path from "node:path";
 
-const MAX_REPLY_MESSAGE_CHARS = 400;
+const DEBUG = process.env.DEBUG === "1";
+
+function debugLog(...args) {
+  if (DEBUG) console.log("[DEBUG]", ...args);
+}
+
 const MAX_HISTORY_ITEMS = 3;
 const BLOCKED_PATTERNS = [
   /微信/i,
@@ -19,22 +24,6 @@ const BLOCKED_PATTERNS = [
 // ✅ 新增：AI 自动回复签名
 const AI_SIGNATURE = "【沪上码仔AI自动回复，注意甄别】";
 const AI_SIGNATURE_LENGTH = AI_SIGNATURE.length;
-
-function truncateReplyMessage(text) {
-  const source = String(text ?? "");
-  const codePoints = [...source];
-  if (codePoints.length <= MAX_REPLY_MESSAGE_CHARS) {
-    return {
-      text: source,
-      truncated: false,
-    };
-  }
-
-  return {
-    text: codePoints.slice(0, MAX_REPLY_MESSAGE_CHARS).join(""),
-    truncated: true,
-  };
-}
 
 function replaceStraightDoubleQuotes(text) {
   let open = true;
@@ -147,8 +136,8 @@ async function loadReplySource(inputPath) {
 }
 
 async function generateSingleReply({ llmConfig, selectedWork, comment }) {
-  console.log(`[DEBUG] 调用 LLM 生成回复，模型: ${llmConfig.model}`);
-  console.log(`[DEBUG] 评论内容: ${comment.commentText.slice(0, 100)}${comment.commentText.length > 100 ? "..." : ""}`);
+  debugLog("调用 LLM 生成回复，模型:", llmConfig.model);
+  debugLog("评论内容:", comment.commentText.slice(0, 100), comment.commentText.length > 100 ? "..." : "");
 
   const response = await globalThis.fetch(
     `${llmConfig.baseURL.replace(/\/$/, "")}/chat/completions`,
@@ -187,7 +176,7 @@ async function generateSingleReply({ llmConfig, selectedWork, comment }) {
     throw new Error("LLM response does not contain choices[0].message.content");
   }
 
-  console.log(`[DEBUG] LLM 响应内容: ${text.slice(0, 100)}${text.length > 100 ? "..." : ""}`);
+  debugLog("LLM 响应内容:", text.slice(0, 100), text.length > 100 ? "..." : "");
   return text;
 }
 
@@ -196,13 +185,13 @@ export async function generateReplyPlan({ outputPath } = {}) {
   const configPath = path.resolve("config.json");
 
   // === 日志：读取配置文件 ===
-  console.log(`[DEBUG] 尝试读取配置文件: ${configPath}`);
+  debugLog("尝试读取配置文件:", configPath);
   let config = null;
   try {
     const configContent = await fs.readFile(configPath, "utf8");
-    console.log(`[DEBUG] 配置文件内容: ${configContent.length} 字符`);
+    debugLog("配置文件内容:", configContent.length, "字符");
     config = JSON.parse(configContent);
-    console.log(`[DEBUG] 配置文件解析成功`);
+    debugLog("配置文件解析成功");
   } catch (error) {
     console.error(`[ERROR] 读取或解析 config.json 失败: ${error.message}`);
     throw new Error("config.json 文件不存在或格式错误，请确保它位于项目根目录");
@@ -214,7 +203,7 @@ export async function generateReplyPlan({ outputPath } = {}) {
   }
 
   const llmConfig = config.llm;
-  console.log(`[DEBUG] LLM 配置: baseURL=${llmConfig.baseURL}, model=${llmConfig.model}, apiKey=${llmConfig.apiKey.substring(0, 5)}...`);
+  debugLog("LLM 配置: baseURL=" + llmConfig.baseURL + ", model=" + llmConfig.model + ", apiKey=" + llmConfig.apiKey.substring(0, 5) + "...");
 
   // 安全获取 paths，如果不存在则使用默认值
   const defaultPaths = {
@@ -222,19 +211,19 @@ export async function generateReplyPlan({ outputPath } = {}) {
     exportFile: "comments-output/unreplied-comments.json"
   };
   const paths = config.paths || defaultPaths;
-  console.log(`[DEBUG] 使用输出路径: ${paths.planFile}`);
+  debugLog("使用输出路径:", paths.planFile);
 
   // === 日志：扫描评论文件 ===
-  console.log(`[DEBUG] 扫描评论文件目录: ${commentOutputDir}`);
+  debugLog("扫描评论文件目录:", commentOutputDir);
   const allFiles = await fs.readdir(commentOutputDir);
-  console.log(`[DEBUG] 目录内容: ${allFiles.join(", ")}`);
+  debugLog("目录内容:", allFiles.join(", "));
 
   const commentFiles = [];
   for (const file of allFiles) {
     if (file.startsWith("unreplied-comments-") && file.endsWith(".json")) {
       const filePath = path.resolve(commentOutputDir, file);
       commentFiles.push(filePath);
-      console.log(`[DEBUG] 发现评论文件: ${file}`);
+      debugLog("发现评论文件:", file);
     }
   }
 
@@ -258,15 +247,15 @@ export async function generateReplyPlan({ outputPath } = {}) {
       const source = await loadReplySource(filePath);
       if (!selectedWork) {
         selectedWork = source.selectedWork;
-        console.log(`[DEBUG] 使用作品上下文: ${selectedWork.title}`);
+        debugLog("使用作品上下文:", selectedWork.title);
       }
-      console.log(`[DEBUG] 文件包含 ${source.comments.length} 条评论`);
+      debugLog("文件包含", source.comments.length, "条评论");
 
       for (const comment of source.comments) {
         if (normalizeText(comment.replyMessage)) {
           allComments.push({ ...comment });
           generatedCount += 1;
-          console.log(`[DEBUG] 跳过已生成回复的评论: ${comment.username}`);
+          debugLog("跳过已生成回复的评论:", comment.username);
           continue;
         }
         const newComment = { ...comment };
@@ -284,7 +273,7 @@ export async function generateReplyPlan({ outputPath } = {}) {
   for (const comment of allComments) {
     if (normalizeText(comment.replyMessage)) continue;
 
-    console.log(`[DEBUG] 正在为 ${comment.username} 生成回复: ${comment.commentText.slice(0, 50)}...`);
+    debugLog("正在为", comment.username, "生成回复:", comment.commentText.slice(0, 50) + "...");
 
     try {
       const text = await generateSingleReply({ llmConfig, selectedWork, comment });
@@ -293,10 +282,10 @@ export async function generateReplyPlan({ outputPath } = {}) {
 
       if (sanitized.replyMessage) {
         generatedCount += 1;
-        console.log(`[DEBUG] 成功生成回复: ${sanitized.replyMessage.slice(0, 50)}...`);
+        debugLog("成功生成回复:", sanitized.replyMessage.slice(0, 50) + "...");
       } else {
         skippedCount += 1;
-        console.log(`[DEBUG] 回复被过滤: ${sanitized.skipReason}`);
+        debugLog("回复被过滤:", sanitized.skipReason);
       }
     } catch (error) {
       comment.replyMessage = "";
@@ -309,7 +298,7 @@ export async function generateReplyPlan({ outputPath } = {}) {
   // === 日志：输出结果 ===
   const plan = { selectedWork, count: allComments.length, comments: allComments };
   const finalOutputPath = outputPath || paths.planFile;
-  console.log(`[DEBUG] 将结果写入: ${finalOutputPath}`);
+  debugLog("将结果写入:", finalOutputPath);
   await emitResult(plan, finalOutputPath);
 
   console.log(`\n[RESULT] 生成回复计划完成！\n- 总评论数: ${allComments.length}\n- 已生成回复: ${generatedCount}\n- 跳过（无回复）: ${skippedCount}\n- 生成失败: ${failedCount}\n- 输出文件: ${finalOutputPath}`);

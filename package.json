@@ -38,8 +38,6 @@
     "format:check": "prettier --check \"src/**/*.mjs\" \"*.json\" \"*.md\""
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^1.0.16",
-    "ai": "^5.0.90",
     "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
     "node-cron": "^4.2.1",

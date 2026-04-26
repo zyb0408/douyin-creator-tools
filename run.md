@@ -1,5 +1,60 @@
 # 运行步骤指南
 
+## ✅ 环境与依赖准备（首次运行必读）
+
+### 1. 系统要求
+- Node.js ≥ 20.0.0（推荐使用 [nvm](https://github.com/nvm-sh/nvm) 管理版本）
+- npm（随 Node.js 安装）
+- macOS 或 Linux（Windows 未测试，建议使用 WSL）
+- 可访问互联网（用于下载依赖和登录抖音）
+
+### 2. 安装项目依赖
+
+```bash
+# 克隆仓库（如未完成）
+git clone https://github.com/zyb0408/douyin-creator-tools.git
+cd douyin-creator-tools
+
+# 安装 Node.js 依赖
+npm install
+
+# 安装 Playwright Chromium 浏览器引擎
+npx playwright install chromium
+```
+
+> ✅ 这些步骤只需执行一次，完成后即可长期使用。
+
+### 3. 首次登录抖音（必须手动扫码）
+
+```bash
+npm run auth
+```
+
+**作用**：启动 Playwright 浏览器，打开抖音创作者中心登录页，**请用手机抖音 App 扫码登录**。
+
+> 🔐 登录成功后，会自动生成 `.playwright/douyin-profile` 目录，保存你的登录态。**请勿删除或替换此目录**，否则每次都要重新扫码。
+> ✅ 此步骤只需执行一次，后续自动化流程将自动复用登录态。
+
+### 4. 配置本地大模型（LLM）
+
+编辑 `config.json` 文件，确保 `llm` 字段指向你正在运行的本地大模型服务：
+
+```json
+{
+  "llm": {
+    "baseURL": "http://127.0.0.1:8000/v1",
+    "apiKey": "sk-123456",
+    "model": "Qwen3.6-35B-A3B-4bit",
+    "temperature": 0.7,
+    "maxTokens": 300
+  }
+}
+```
+
+> ⚠️ 确保你的本地大模型服务（如 Ollama、vLLM、FastChat 等）已启动并监听该地址。否则 `generate-reply` 步骤将失败。
+
+---
+
 ## ✅ 一键全自动流程（推荐）
 
 执行以下命令，**一步完成全部操作**：
@@ -83,11 +138,11 @@ npm run comments:reply-all
 
 - **LLM 配置**：修改 `config.json` 中的 `llm` 字段，设置你的本地模型地址、密钥和模型名
 - **回复签名**：在 `src/lib/llm-reply-generator.mjs` 中修改 `AI_SIGNATURE` 常量
-- **自动清理**：`reply-all-works.mjs` 中的 `CLEAN_FILES` 数组可自定义保留或删除的文件
+- **自动清理**：`reply-all-works.mjs` 中的清理逻辑会自动删除所有 `.json` 文件，无需手动干预
 
 ## 💡 使用建议
 
-- 首次使用请先手动执行 `npm run works` 和 `npm run comments:export`，确认能正常登录和获取数据
+- 首次使用请按顺序执行：`npm install` → `npx playwright install chromium` → `npm run auth` → `./run-all.sh`
 - 确保 `config.json` 中的 `baseURL` 指向正在运行的本地大模型服务（如 http://127.0.0.1:8000/v1）
 - 不要清空 `.playwright/douyin-profile`，它保存了你的登录态
 - 推荐使用 `./run-all.sh` 作为日常执行命令，无需记忆复杂步骤

@@ -213,15 +213,35 @@ export async function listWorks(options = {}) {
   }
 }
 
-export async function exportUnrepliedComments(options = {}) {
-  if (!options.workTitle) {
-    throw new Error('Missing work title. Usage: npm run comments:export -- "作品短标题"');
-  }
-
-  const outputPath = options.outputPath || DEFAULT_EXPORT_OUTPUT_PATH;
+/**
+ * 导出评论的内部共享逻辑。
+ * @param {object} options - 运行选项
+ * @param {object} config - 模式配置
+ * @param {"unreplied"|"all"} config.filterMode - 评论过滤模式
+ * @param {boolean} config.hardRefresh - 是否在选作品前执行硬刷新
+ */
+async function exportCommentsInternal(options = {}, { filterMode = "unreplied", hardRefresh = false } = {}) {
+  const outputPath = options.outputPath ||
+    (filterMode === "all" ? DEFAULT_EXPORT_ALL_OUTPUT_PATH : DEFAULT_EXPORT_OUTPUT_PATH);
   const { context, page, runtimeBudget } = await openCommentSession(options);
 
   try {
+    // 硬刷新逻辑（仅 exportAllComments 使用）：清空 HTTP 缓存，确保拿到最新评论数据
+    let preSelectionFingerprint = "";
+    if (hardRefresh) {
+      await hardRefreshPage(page, {
+        navigationTimeoutMs: DEFAULT_NAVIGATION_TIMEOUT_MS
+      });
+      // 刷新后等"选择作品"按钮出现，确认页面已恢复就绪
+      await page
+        .locator('button:has-text("选择作品"), [role="button"]:has-text("选择作品")')
+        .first()
+        .waitFor({ state: "visible", timeout: DEFAULT_UI_TIMEOUT_MS });
+      // 等页面自动加载默认作品的评论（最多 8 秒），拿到稳定「旧指纹」
+      await waitForCommentListChange(page, "", 8000).catch(() => {});
+      preSelectionFingerprint = await captureCommentListFingerprint(page).catch(() => "");
+    }
+
     const targetWork = await resolveTargetWork(
       page,
       runtimeBudget,
@@ -230,13 +250,25 @@ export async function exportUnrepliedComments(options = {}) {
     );
 
     console.log(`已选中作品：${getSelectedWorkOutput(targetWork).title}`);
-    const comments = await collectComments(page, {
+
+    // 选作品后等待评论列表从「旧指纹」切换到目标作品内容（仅硬刷新模式）
+    if (hardRefresh) {
+      await waitForCommentListChange(page, preSelectionFingerprint, 10000).catch(() => {});
+    }
+
+    // 构造 collectComments 参数，filterMode 为 "all" 时传入，否则使用默认值
+    const collectOptions = {
       ...runtimeBudget,
       limit: options.limit || DEFAULT_EXPORT_LIMIT,
       timeoutMs: DEFAULT_COMMENTS_TIMEOUT_MS,
       idleMs: DEFAULT_COMMENTS_IDLE_MS,
       uiTimeoutMs: DEFAULT_UI_TIMEOUT_MS
-    });
+    };
+    if (filterMode === "all") {
+      collectOptions.filterMode = "all";
+    }
+
+    const comments = await collectComments(page, collectOptions);
 
     const selectedWorkOutput = getSelectedWorkOutput(targetWork) ?? { title: "" };
     const includeHistory = !options.noHistory;
@@ -271,7 +303,8 @@ export async function exportUnrepliedComments(options = {}) {
 
     await downloadCommentImages(exportComments, outputPath);
 
-    if (exportComments.length === 0) {
+    // 未回复模式且无评论时提前返回，不创建输出文件
+    if (filterMode === "unreplied" && exportComments.length === 0) {
       console.log(`[info] 作品 "${selectedWorkOutput.title}" 没有未回复的评论，不创建输出文件`);
       return;
     }
@@ -283,9 +316,12 @@ export async function exportUnrepliedComments(options = {}) {
         comments: exportComments.map((comment) => {
           const entry = {
             username: comment.username,
-            commentText: comment.commentText,
-            replyMessage: ""
+            commentText: comment.commentText
           };
+          // 未回复模式包含 replyMessage 字段
+          if (filterMode === "unreplied") {
+            entry.replyMessage = "";
+          }
           if (comment.imagePaths?.length > 0) {
             entry.imagePaths = comment.imagePaths;
           }
@@ -315,120 +351,18 @@ export async function exportUnrepliedComments(options = {}) {
   }
 }
 
+export async function exportUnrepliedComments(options = {}) {
+  if (!options.workTitle) {
+    throw new Error('Missing work title. Usage: npm run comments:export -- "作品短标题"');
+  }
+  return exportCommentsInternal(options, { filterMode: "unreplied", hardRefresh: false });
+}
+
 export async function exportAllComments(options = {}) {
   if (!options.workTitle) {
     throw new Error('Missing work title. Usage: npm run comments:export-all -- "作品短标题"');
   }
-
-  const outputPath = options.outputPath || DEFAULT_EXPORT_ALL_OUTPUT_PATH;
-  const { context, page, runtimeBudget } = await openCommentSession(options);
-
-  try {
-    // 强制刷新（清空 HTTP 缓存，等价于 Ctrl+Shift+R），确保拿到最新评论数据。
-    // 必须在选作品之前刷新，刷新后 SPA 状态重置，选作品后不再刷新。
-    await hardRefreshPage(page, {
-      navigationTimeoutMs: DEFAULT_NAVIGATION_TIMEOUT_MS
-    });
-    // 刷新后等"选择作品"按钮出现，确认页面已恢复就绪
-    await page
-      .locator('button:has-text("选择作品"), [role="button"]:has-text("选择作品")')
-      .first()
-      .waitFor({ state: "visible", timeout: DEFAULT_UI_TIMEOUT_MS });
-
-    // 等页面自动加载默认作品的评论（最多 8 秒），拿到稳定「旧指纹」
-    await waitForCommentListChange(page, "", 8000).catch(() => {});
-    const preSelectionFingerprint = await captureCommentListFingerprint(page).catch(() => "");
-
-    const targetWork = await resolveTargetWork(
-      page,
-      runtimeBudget,
-      options.workTitle,
-      options.workPublishText || ""
-    );
-
-    console.log(`已选中作品：${getSelectedWorkOutput(targetWork).title}`);
-
-    // 等评论列表从「旧指纹」切换到目标作品内容
-    await waitForCommentListChange(page, preSelectionFingerprint, 10000).catch(() => {});
-
-    const comments = await collectComments(page, {
-      ...runtimeBudget,
-      filterMode: "all",
-      limit: options.limit || DEFAULT_EXPORT_LIMIT,
-      timeoutMs: DEFAULT_COMMENTS_TIMEOUT_MS,
-      idleMs: DEFAULT_COMMENTS_IDLE_MS,
-      uiTimeoutMs: DEFAULT_UI_TIMEOUT_MS
-    });
-
-    const selectedWorkOutput = getSelectedWorkOutput(targetWork) ?? { title: "" };
-    const includeHistory = !options.noHistory;
-
-    // 在写入当前批次之前查询历史 & 回复次数，确保数据只含过去记录
-    let historyMap = new Map();
-    let replyCountMap = new Map();
-    try {
-      if (includeHistory) {
-        historyMap = getUserHistoryMap(comments.map((c) => c.username));
-      }
-      replyCountMap = getReplyCountMap(
-        selectedWorkOutput.title,
-        comments.map((c) => ({
-          username: c.username,
-          commentText: c.commentText
-        }))
-      );
-    } catch (dbError) {
-      console.warn(`[db] 查询历史/回复次数失败（不影响主流程）: ${dbError?.message ?? dbError}`);
-    }
-
-    // 过滤掉已回复过的评论（reply_count >= 1）
-    const exportComments = comments.filter((c) => {
-      const count = replyCountMap.get(`${c.username}|||${c.commentText}`) ?? 0;
-      return count < 1;
-    });
-    const skipped = comments.length - exportComments.length;
-    if (skipped > 0) {
-      console.log(`[db] 过滤掉 ${skipped} 条已回复过的评论`);
-    }
-
-    await downloadCommentImages(exportComments, outputPath);
-
-    await emitResult(
-      {
-        selectedWork: selectedWorkOutput,
-        count: exportComments.length,
-        comments: exportComments.map((comment) => {
-          const entry = {
-            username: comment.username,
-            commentText: comment.commentText
-          };
-          if (comment.imagePaths?.length > 0) {
-            entry.imagePaths = comment.imagePaths;
-          }
-          if (includeHistory) {
-            entry.history = historyMap.get(comment.username) ?? [];
-          }
-          return entry;
-        })
-      },
-      outputPath
-    );
-
-    try {
-      upsertComments(
-        selectedWorkOutput.title,
-        comments.map((c) => ({
-          username: c.username,
-          commentText: c.commentText,
-          replyMessage: null
-        }))
-      );
-    } catch (dbError) {
-      console.warn(`[db] 写入评论失败（不影响主流程）: ${dbError?.message ?? dbError}`);
-    }
-  } finally {
-    await context.close();
-  }
+  return exportCommentsInternal(options, { filterMode: "all", hardRefresh: true });
 }
 
 export async function replyComments(options = {}) {

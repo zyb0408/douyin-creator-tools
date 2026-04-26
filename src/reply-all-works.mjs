@@ -15,7 +15,7 @@ async function cleanOutputDirectory() {
       if (file.endsWith(".json")) {
         const filePath = path.resolve(OUTPUT_DIR, file);
         await fs.unlink(filePath);
-        console.log(`[DEBUG] 已删除: ${file}`);
+        console.log(`已删除: ${file}`);
       }
     }
     console.log("[INFO] 所有 .json 文件清理完成。");
@@ -77,7 +77,7 @@ async function main() {
 
       try {
         await fs.writeFile(tempPlanPath, JSON.stringify(tempPlan, null, 2));
-        console.log(`[DEBUG] 临时计划文件已创建: ${tempPlanPath}`);
+        console.log(`临时计划文件已创建: ${tempPlanPath}`);
 
         // 调用 reply-douyin-comments.mjs
         const child = spawn("node", [REPLY_SCRIPT, tempPlanPath], {
@@ -100,7 +100,7 @@ async function main() {
 
         // 删除临时文件
         await fs.unlink(tempPlanPath);
-        console.log(`[DEBUG] 临时文件已清理: ${tempPlanPath}`);
+        console.log(`临时文件已清理: ${tempPlanPath}`);
 
       } catch (error) {
         console.error(`[ERROR] 处理作品 ${workTitle} 时出错:`, error.message);

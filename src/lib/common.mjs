@@ -209,6 +209,26 @@ export function sanitizeCollectedComment(comment) {
   return rest;
 }
 
+// ---------------------------------------------------------------------------
+// truncateReplyMessage — 按 Unicode 码点截断回复消息
+// 与平台常见限制一致：汉字、标点、字母、空格各计 1，超出则截断
+// ---------------------------------------------------------------------------
+
+/** 回复消息最大字符数（按 Unicode 码点计数） */
+export const MAX_REPLY_MESSAGE_CHARS = 400;
+
+export function truncateReplyMessage(text) {
+  const source = String(text ?? "");
+  const codePoints = [...source];
+  if (codePoints.length <= MAX_REPLY_MESSAGE_CHARS) {
+    return { text: source, truncated: false };
+  }
+  return {
+    text: codePoints.slice(0, MAX_REPLY_MESSAGE_CHARS).join(""),
+    truncated: true
+  };
+}
+
 const REPAIRABLE_FIELDS_PATTERN =
   /^(\s*"(?:title|subtitle|content|description|replyMessage)"\s*:\s*")(.*)("\s*,?\s*)$/;
 

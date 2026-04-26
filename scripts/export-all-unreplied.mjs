@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 
-const PROJECT_DIR = "/Users/yingbin/Desktop/hermes_workspace/dev/douyin-creator-tools";
+const PROJECT_DIR = path.resolve(import.meta.dirname, "..");
 const OUTPUT_DIR = path.join(PROJECT_DIR, "comments-output");
 
 function printHelp() {

@@ -1,9 +1,11 @@
 import {
   getEffectiveTimeout,
   logReplyFilterDebug,
+  MAX_REPLY_MESSAGE_CHARS,
   normalizeText,
   normalizeUsername,
-  summarizeCommentsForLog
+  summarizeCommentsForLog,
+  truncateReplyMessage
 } from "./common.mjs";
 import {
   advanceCommentScroll,
@@ -16,21 +18,6 @@ import {
   waitForCommentsArea
 } from "./comment-ops.mjs";
 import { extractCommentSnapshot } from "./comment-snapshot.mjs";
-
-/** 与平台常见限制一致：按 Unicode 码点计数字符（汉字、标点、字母、空格各计 1），超出则截断 */
-const MAX_REPLY_MESSAGE_CHARS = 400;
-
-function truncateReplyMessage(text) {
-  const s = text == null ? "" : String(text);
-  const codePoints = [...s];
-  if (codePoints.length <= MAX_REPLY_MESSAGE_CHARS) {
-    return { text: s, truncated: false };
-  }
-  return {
-    text: codePoints.slice(0, MAX_REPLY_MESSAGE_CHARS).join(""),
-    truncated: true
-  };
-}
 
 function buildVisibleUsernameCounts(snapshot, processedSignatures) {
   const counts = new Map();
