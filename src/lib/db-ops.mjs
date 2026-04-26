@@ -156,3 +156,17 @@ export function incrementReplyCount(workTitle, username, commentText) {
     .run(workTitle, username, commentText);
   return info.changes ?? 0;
 }
+
+/**
+ * 清空 comments 表中的所有数据，重置自增 ID。
+ * 用于需要重新开始采集评论的场景。
+ *
+ * @returns {{ deletedCount: number }} 删除的行数
+ */
+export function clearAllComments() {
+  const db = getDb();
+  const count = db.prepare("SELECT COUNT(*) AS total FROM comments").get().total;
+  db.exec("DELETE FROM comments");
+  db.exec("DELETE FROM sqlite_sequence WHERE name = 'comments'");
+  return { deletedCount: count };
+}

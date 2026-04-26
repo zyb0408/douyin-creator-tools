@@ -27,6 +27,7 @@
     "run:once": "node ./src/run-once.mjs",
     "run:scheduler": "node ./src/run-scheduler.mjs",
     "users": "node ./src/users.mjs",
+    "db:clear": "node ./src/clear-database.mjs",
     "article:publish": "node ./src/publish-douyin-article.mjs",
     "imagetext:publish": "node ./src/publish-douyin-imagetext.mjs",
     "server": "PORT=8765 node ./src/server.mjs",
