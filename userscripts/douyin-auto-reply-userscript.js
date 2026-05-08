@@ -447,5 +447,109 @@
 
   ar.collect = { applyUnrepliedFilter, extractFirstUnreplied };
 
+  // ============================================================
+  // send — 单条回复发送时序
+  // ============================================================
+  async function findEditor() {
+    return waitFor(
+      () => {
+        const eds = document.querySelectorAll(SELECTORS.editorContentEditable);
+        for (const e of eds) {
+          if (isVisible(e) && (e.textContent || "").length === 0) return e;
+        }
+        return null;
+      },
+      { timeout: 5000 },
+    );
+  }
+
+  async function findSendButton(near) {
+    return waitFor(
+      () => {
+        const root =
+          near?.closest("[class*='editor'], [class*='Editor'], form") ||
+          document;
+        const btn = queryClickableByText(SELECTORS.sendBtnText, root);
+        if (!btn) return null;
+        if (
+          btn.disabled ||
+          btn.getAttribute("aria-disabled") === "true" ||
+          btn.classList.contains("disabled")
+        )
+          return null;
+        return btn;
+      },
+      { timeout: 4000 },
+    );
+  }
+
+  async function typeReply(editor, text, { typingMinMs, typingMaxMs }) {
+    editor.focus();
+    // 优先一次性插入（最快路径）
+    try {
+      if (document.execCommand) {
+        document.execCommand("insertText", false, text);
+        await sleep(80);
+        if (
+          (editor.textContent || "").includes(
+            text.slice(0, Math.min(8, text.length)),
+          )
+        )
+          return;
+      }
+    } catch (_) {
+      /* 降级 */
+    }
+
+    // 降级：逐字 dispatch input event（对 React 受控组件有效）
+    for (const ch of text) {
+      const before = editor.textContent || "";
+      editor.dispatchEvent(
+        new InputEvent("beforeinput", {
+          data: ch,
+          inputType: "insertText",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      editor.textContent = before + ch;
+      editor.dispatchEvent(
+        new InputEvent("input", {
+          data: ch,
+          inputType: "insertText",
+          bubbles: true,
+        }),
+      );
+      await sleep(randomBetween(typingMinMs, typingMaxMs));
+    }
+  }
+
+  /**
+   * 完整的单条回复时序：滚动 → 点回复 → 等输入框 → 输入 → 等发送 enabled → 点发送 → 等消失
+   * 成功返回 true，失败抛错。
+   */
+  async function sendReply(commentInfo, replyText, cfg) {
+    const { container, replyBtn } = commentInfo;
+    container.scrollIntoView({ block: "center", behavior: "instant" });
+    await sleep(200);
+
+    realClick(replyBtn);
+
+    const editor = await findEditor();
+    await typeReply(editor, replyText, cfg);
+
+    const sendBtn = await findSendButton(editor);
+    realClick(sendBtn);
+
+    // 等评论从未回复列表消失（或回复按钮消失）
+    await waitFor(
+      () => !document.body.contains(replyBtn) || !isVisible(replyBtn),
+      { timeout: 8000 },
+    );
+    return true;
+  }
+
+  ar.send = { findEditor, findSendButton, typeReply, sendReply };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
