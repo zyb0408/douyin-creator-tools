@@ -623,5 +623,60 @@
 
   ar.llm = { buildPrompt, callLLM };
 
+  // ============================================================
+  // generator — 三种模式：template / llm / hybrid
+  // ============================================================
+  async function generateReply({ cfg, workTitle, comment }) {
+    const mode = cfg.mode;
+
+    if (mode === "template") {
+      if (!cfg.templates || cfg.templates.length === 0)
+        return { text: null, reason: "no_templates" };
+      return { text: pickRandom(cfg.templates), via: "template" };
+    }
+
+    if (mode === "llm") {
+      try {
+        const raw = await callLLM({ llmConfig: cfg.llm, workTitle, comment });
+        return { text: raw, via: "llm" };
+      } catch (e) {
+        return {
+          text: null,
+          reason: `llm_failed:${e.message}`,
+          status: e.status,
+        };
+      }
+    }
+
+    if (mode === "hybrid") {
+      try {
+        const raw = await callLLM({ llmConfig: cfg.llm, workTitle, comment });
+        return { text: raw, via: "llm" };
+      } catch (e) {
+        // 401/429 时不回退（避免烧 quota），让上层中止整轮
+        if (e.status === 401 || e.status === 429)
+          return {
+            text: null,
+            reason: `llm_${e.status}`,
+            status: e.status,
+            fatal: true,
+          };
+        if (cfg.templates && cfg.templates.length > 0)
+          return {
+            text: pickRandom(cfg.templates),
+            via: "template_fallback",
+          };
+        return {
+          text: null,
+          reason: `llm_failed_no_template:${e.message}`,
+        };
+      }
+    }
+
+    return { text: null, reason: `unknown_mode:${mode}` };
+  }
+
+  ar.generator = { generateReply };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
