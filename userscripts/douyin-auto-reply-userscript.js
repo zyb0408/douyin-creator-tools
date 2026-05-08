@@ -551,5 +551,77 @@
 
   ar.send = { findEditor, findSendButton, typeReply, sendReply };
 
+  // ============================================================
+  // llm — OpenAI 兼容接口客户端
+  // ============================================================
+  const SYSTEM_PROMPT_HEADER =
+    "你是抖音创作者评论助手。请只输出一条可以直接发送的中文回复，不要解释，不要加引号，不要分点。";
+
+  function buildPrompt({ workTitle, comment }) {
+    return [
+      SYSTEM_PROMPT_HEADER,
+      "",
+      "要求：",
+      "1. 回复自然、真诚、简短，尽量像真人。",
+      "2. 不要引流，不要留联系方式，不要让用户私信。",
+      "3. 不要夸大承诺，不要出现营销腔。",
+      "4. 如果评论带图但你看不到图片内容，不要编造图片细节。",
+      "5. 最终回复控制在 80 字内，绝对不要超过 400 字。",
+      "",
+      `作品标题：${normalizeText(workTitle) || "未知作品"}`,
+      `用户昵称：${normalizeText(comment.username || "")}`,
+      `评论内容：${normalizeText(comment.commentText || "")}`,
+      `评论是否带图：否`,
+    ].join("\n");
+  }
+
+  async function callLLM(
+    { llmConfig, workTitle, comment },
+    { timeoutMs = 15000 } = {},
+  ) {
+    const url =
+      llmConfig.baseURL.replace(/\/$/, "") + "/chat/completions";
+    const body = {
+      model: llmConfig.model,
+      temperature: llmConfig.temperature,
+      max_tokens: llmConfig.maxTokens,
+      messages: [
+        { role: "user", content: buildPrompt({ workTitle, comment }) },
+      ],
+    };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${llmConfig.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        const err = new Error(
+          `LLM ${res.status}: ${errText.slice(0, 200)}`,
+        );
+        err.status = res.status;
+        throw err;
+      }
+      const payload = await res.json();
+      const content = payload?.choices?.[0]?.message?.content;
+      if (typeof content !== "string")
+        throw new Error(
+          "LLM response missing choices[0].message.content",
+        );
+      return content;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  ar.llm = { buildPrompt, callLLM };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
