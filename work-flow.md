@@ -485,5 +485,19 @@ clear-database.mjs
 | 文件 | 职责 |
 |------|------|
 | `src/clear-database.mjs` | CLI 入口：确认提示 + 调用清空函数 |
-| `src/lib/db-ops.mjs` → `clearAllComments()` | 执行 DELETE + 重置自增 ID |
-| `src/lib/db.mjs` → `closeDb()` | 关闭数据库连接 |
+|| `src/lib/db-ops.mjs` → `clearAllComments()` | 执行 DELETE + 重置自增 ID |
+|| `src/lib/db.mjs` → `closeDb()` | 关闭数据库连接 |
+
+
+---
+
+## 油猴脚本（浏览器轻量版）
+
+适合每天 < 200 条评论的轻量场景，无需部署 Node 后端，直接在浏览器内跑。
+
+- **位置**：[`userscripts/douyin-auto-reply-userscript.js`](./userscripts/douyin-auto-reply-userscript.js)
+- **完整安装与使用说明**：[`userscripts/README.md`](./userscripts/README.md)
+
+简要：装 Tampermonkey → 把脚本内容粘进新建脚本 → 打开抖音创作者中心评论管理页 → 点右下角 🤖 按钮配置（启用、模式、模板、LLM、定时扫描）→ 点开始。
+
+回复风格、内容过滤规则与本文档前述 Node.js 工具的步骤 3「LLM 生成回复」**完全一致**（同一套 system prompt + sanitize），但数据完全独立，不读写 SQLite。
