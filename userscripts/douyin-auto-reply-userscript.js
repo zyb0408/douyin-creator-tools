@@ -936,12 +936,106 @@
     installUrlGuard,
   };
 
+  // ============================================================
+  // ui — Shadow DOM 悬浮面板
+  // ============================================================
+  const UI_STYLES = `
+    :host { all: initial; }
+    .root { position: fixed; right: 24px; bottom: 24px; z-index: 2147483647;
+            font-family: -apple-system, "PingFang SC", system-ui, sans-serif; font-size: 13px; color: #1f2328; }
+    .fab { width: 56px; height: 56px; border-radius: 28px; background: #1f6feb; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.2); user-select: none; }
+    .panel { width: 380px; max-height: 80vh; background: #fff; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.18); overflow: hidden; display: flex; flex-direction: column; }
+    .panel header { padding: 12px 14px; background: #f6f8fa; border-bottom: 1px solid #e1e4e8; display: flex; align-items: center; justify-content: space-between; cursor: move; }
+    .panel header .title { font-weight: 600; }
+    .panel header .actions button { background: transparent; border: none; cursor: pointer; padding: 4px 6px; font-size: 14px; }
+    .body { padding: 12px; overflow-y: auto; flex: 1; }
+    .section { border: 1px solid #e1e4e8; border-radius: 6px; margin-bottom: 8px; }
+    .section > summary { padding: 8px 10px; cursor: pointer; font-weight: 500; background: #fafbfc; }
+    .section[open] > summary { border-bottom: 1px solid #e1e4e8; }
+    .section .content { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .row { display: flex; align-items: center; gap: 8px; }
+    .row label { flex: 0 0 80px; color: #57606a; }
+    .row input[type="text"], .row input[type="number"], .row input[type="password"], .row select { flex: 1; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 4px; font: inherit; }
+    textarea { width: 100%; min-height: 80px; padding: 6px; border: 1px solid #d0d7de; border-radius: 4px; font: inherit; resize: vertical; box-sizing: border-box; }
+    .controls { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid #e1e4e8; background: #fafbfc; flex-wrap: wrap; }
+    .btn { padding: 6px 12px; border: 1px solid #d0d7de; background: #fff; border-radius: 6px; cursor: pointer; font: inherit; }
+    .btn.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .log { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; background: #0d1117; color: #9ece6a; padding: 8px; border-radius: 4px; height: 160px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    .status { padding: 8px 12px; background: #fff; border-bottom: 1px solid #e1e4e8; font-size: 12px; color: #57606a; }
+    .status.running { color: #1a7f37; }
+  `;
+
+  function createPanelHost() {
+    const host = document.createElement("div");
+    host.id = "douyin-ar-host";
+    host.style.position = "fixed";
+    host.style.zIndex = "2147483647";
+    host.style.right = "0";
+    host.style.bottom = "0";
+    document.body.appendChild(host);
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = UI_STYLES;
+    shadow.appendChild(style);
+    const root = document.createElement("div");
+    root.className = "root";
+    shadow.appendChild(root);
+    return { host, shadow, root };
+  }
+
+  let uiState = { collapsed: true, root: null, shadow: null };
+
+  function renderFab() {
+    uiState.root.innerHTML = `<div class="fab" title="抖音自动回复">🤖</div>`;
+    uiState.root.querySelector(".fab").addEventListener("click", () => {
+      uiState.collapsed = false;
+      render();
+    });
+  }
+
+  // 占位：完整 panel 留到 Task 14 实现
+  function renderPanel() {
+    uiState.root.innerHTML = `
+      <div class="panel">
+        <header><span class="title">🤖 抖音自动回复</span><span class="actions"><button class="collapse">—</button></span></header>
+        <div class="status">状态：待机</div>
+        <div class="body"><em>面板内容将在 Task 14 填充</em></div>
+      </div>
+    `;
+    uiState.root.querySelector(".collapse").addEventListener("click", () => {
+      uiState.collapsed = true;
+      render();
+    });
+  }
+
+  function render() {
+    if (uiState.collapsed) renderFab();
+    else renderPanel();
+  }
+
+  function initUI() {
+    const { root, shadow } = createPanelHost();
+    uiState.root = root;
+    uiState.shadow = shadow;
+    render();
+  }
+
+  ar.ui = {
+    initUI,
+    render,
+    get state() {
+      return uiState;
+    },
+  };
+
   // 启动时根据配置自动恢复定时器
   const __cfg = loadConfig();
   if (__cfg.schedule.enabled) {
     setTimeout(() => startScheduler(), 2000); // 等 DOM 稳定
   }
   installUrlGuard();
+  initUI();
 
   console.log(`${TAG} loaded v${VERSION}`);
 })();
