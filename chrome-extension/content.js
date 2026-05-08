@@ -463,30 +463,48 @@
     }
     if (!replyBtn) return null;
 
-    // 评论容器：往上找到一个面积合理的祖先
-    let container = replyBtn.parentElement;
-    while (container && container.parentElement) {
-      const c = container.parentElement;
-      // 一旦走到含多组操作按钮的列表层就停
-      if (
-        c.querySelectorAll(SELECTORS.commentActionItemSelector).length > 4
-      )
-        break;
-      if (c.tagName === "UL" || c.tagName === "OL") break;
-      container = c;
-      if (container.getBoundingClientRect().height > 80) break;
+    // 评论容器：抖音命名规律是 class="container-XXXX"（XXXX 是 hash）
+    // 兜底依次尝试 content-XXXX、然后是含时间标识 + 高度合理的祖先
+    let container = replyBtn.closest("[class*='container-']");
+    if (!container) container = replyBtn.closest("[class*='content-']");
+    if (!container) {
+      let p = replyBtn.parentElement;
+      while (p && p.parentElement) {
+        const r = p.getBoundingClientRect();
+        const text = (p.textContent || "").trim();
+        if (
+          r.height >= 60 &&
+          /(\d+[小时分钟天月秒]前|昨天|前天|刚刚|\d{1,2}-\d{1,2})/.test(text) &&
+          text.length > 20
+        ) {
+          container = p;
+          break;
+        }
+        p = p.parentElement;
+      }
     }
+    if (!container) container = replyBtn.parentElement;
 
-    // 抽用户名/评论文本：去掉尾部操作按钮文本
+    // 抽用户名/评论文本
+    // 抖音格式: "Sting昨天18:53缓存命中97%左右 1回复删除举报"
+    //          [用户名][时间][评论文本][操作行]
     const allText = (container.textContent || "")
       .trim()
       .replace(/\s+/g, " ");
-    // 抖音操作行通常是 "赞 N 回复 删除 举报" 或 "回复 删除 举报"
-    const stripped = allText.replace(/(?:赞\s*\d*\s*)?回复\s*删除\s*举报.*$/, "").trim();
-    const lines = stripped.split(/\s{2,}/).filter(Boolean);
-    const username = lines[0] || "unknown";
+    const timeRe =
+      /(\d+\s*[小时分钟天秒]前|昨天\s*\d{1,2}[:：]\d{1,2}|前天\s*\d{1,2}[:：]\d{1,2}|刚刚|\d{1,2}-\d{1,2}\s*\d{1,2}[:：]\d{1,2})/;
+    const m = allText.match(timeRe);
+    let username = "unknown";
+    let body = allText;
+    if (m) {
+      username = allText.slice(0, m.index).trim() || "unknown";
+      body = allText.slice(m.index + m[0].length).trim();
+    }
+    // 去尾部操作按钮文本: "1回复删除举报" 或 "0回复删除举报查看N条回复"
     const commentText =
-      lines.slice(1).join(" ") || stripped.slice(0, 100);
+      body
+        .replace(/\s*\d*\s*回复\s*删除\s*举报.*$/, "")
+        .trim() || body.slice(0, 100);
 
     return { container, replyBtn, username, commentText };
   }
