@@ -93,5 +93,53 @@
 
   ar.config = { DEFAULT_CONFIG, loadConfig, saveConfig, deepMerge };
 
+  // ============================================================
+  // utils — 通用工具
+  // ============================================================
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const randomBetween = (min, max) => min + Math.random() * (max - min);
+  const randomInt = (min, max) => Math.floor(randomBetween(min, max + 1));
+  const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const nowHHMMSS = () => {
+    const d = new Date();
+    return [d.getHours(), d.getMinutes(), d.getSeconds()]
+      .map((n) => String(n).padStart(2, "0"))
+      .join(":");
+  };
+
+  // 日志缓冲：最多 200 行，提供订阅器供 UI 实时刷新
+  const LOG_MAX = 200;
+  const logBuffer = [];
+  const logSubscribers = new Set();
+  function appendLog(line) {
+    const stamped = `[${nowHHMMSS()}] ${line}`;
+    logBuffer.push(stamped);
+    if (logBuffer.length > LOG_MAX) logBuffer.shift();
+    for (const fn of logSubscribers) {
+      try {
+        fn(stamped, logBuffer);
+      } catch (e) {
+        console.error(TAG, "log subscriber failed:", e);
+      }
+    }
+    console.log(TAG, stamped);
+  }
+  function clearLog() {
+    logBuffer.length = 0;
+    for (const fn of logSubscribers) fn(null, logBuffer);
+  }
+
+  ar.utils = {
+    sleep,
+    randomBetween,
+    randomInt,
+    pickRandom,
+    nowHHMMSS,
+    appendLog,
+    clearLog,
+    logBuffer,
+    logSubscribers,
+  };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
