@@ -842,5 +842,106 @@
 
   ar.engine = { runOnce, requestPause, getState };
 
+  // ============================================================
+  // scheduler — setTimeout 递归调度
+  // ============================================================
+  const sched = { timer: null, nextFireAt: 0 };
+
+  function clearScheduler() {
+    if (sched.timer) {
+      clearTimeout(sched.timer);
+      sched.timer = null;
+      sched.nextFireAt = 0;
+    }
+  }
+
+  function scheduleNext(intervalMs) {
+    clearScheduler();
+    sched.nextFireAt = Date.now() + intervalMs;
+    sched.timer = setTimeout(async () => {
+      sched.timer = null;
+      const cfg = loadConfig();
+      if (!cfg.schedule.enabled) return; // 期间被关闭
+      try {
+        await runOnce({ trigger: "schedule" });
+      } catch (e) {
+        appendLog(`定时轮异常：${e.message}`);
+      }
+      // 排下一次（loadConfig 重新读，间隔可能被改）
+      const c2 = loadConfig();
+      if (c2.schedule.enabled)
+        scheduleNext(c2.schedule.intervalMin * 60_000);
+    }, intervalMs);
+  }
+
+  function startScheduler() {
+    const cfg = loadConfig();
+    if (!cfg.schedule.enabled) return;
+    if (cfg.schedule.intervalMin < 5) {
+      appendLog(`定时间隔小于 5 分钟，已忽略`);
+      return;
+    }
+    appendLog(`定时已开启，间隔 ${cfg.schedule.intervalMin} 分钟`);
+    if (cfg.schedule.runImmediatelyOnStart) {
+      runOnce({ trigger: "schedule" }).then(() =>
+        scheduleNext(cfg.schedule.intervalMin * 60_000),
+      );
+    } else {
+      scheduleNext(cfg.schedule.intervalMin * 60_000);
+    }
+  }
+
+  function stopScheduler() {
+    clearScheduler();
+    appendLog("定时已停止");
+  }
+
+  function getSchedulerInfo() {
+    return {
+      active: !!sched.timer,
+      nextFireAt: sched.nextFireAt,
+      msUntilNext: sched.nextFireAt ? sched.nextFireAt - Date.now() : 0,
+    };
+  }
+
+  // URL 守卫：离开评论管理页时暂停定时器，回来后恢复
+  function installUrlGuard() {
+    const isOnTargetPage = () =>
+      /\/creator-micro\/(comment-manage|data-center\/comment)/.test(
+        location.pathname,
+      );
+    let onTarget = isOnTargetPage();
+    const obs = new MutationObserver(() => {
+      const now = isOnTargetPage();
+      if (now === onTarget) return;
+      onTarget = now;
+      const cfg = loadConfig();
+      if (!cfg.schedule.enabled) return;
+      if (now) {
+        appendLog("回到评论管理页，恢复定时");
+        startScheduler();
+      } else {
+        appendLog("离开评论管理页，暂停定时");
+        clearScheduler();
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  ar.scheduler = {
+    startScheduler,
+    stopScheduler,
+    scheduleNext,
+    getSchedulerInfo,
+    installUrlGuard,
+  };
+
+  // 启动时根据配置自动恢复定时器
+  const __cfg = loadConfig();
+  if (__cfg.schedule.enabled) {
+    setTimeout(() => startScheduler(), 2000); // 等 DOM 稳定
+  }
+  installUrlGuard();
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
