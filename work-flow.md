@@ -491,13 +491,17 @@ clear-database.mjs
 
 ---
 
-## 油猴脚本（浏览器轻量版）
+## 浏览器轻量版（油猴脚本 / Chrome 扩展）
 
 适合每天 < 200 条评论的轻量场景，无需部署 Node 后端，直接在浏览器内跑。
 
-- **位置**：[`userscripts/douyin-auto-reply-userscript.js`](./userscripts/douyin-auto-reply-userscript.js)
-- **完整安装与使用说明**：[`userscripts/README.md`](./userscripts/README.md)
+提供两种实现，**功能完全一致**，按以下顺序选用：
 
-简要：装 Tampermonkey → 把脚本内容粘进新建脚本 → 打开抖音创作者中心评论管理页 → 点右下角 🤖 按钮配置（启用、模式、模板、LLM、定时扫描）→ 点开始。
+1. **Chrome 扩展（推荐）**：[`chrome-extension/`](./chrome-extension/) → [安装说明](./chrome-extension/README.md)
+   抖音创作者中心有 CSP（内容安全策略）会拦截油猴脚本注入，**首选用扩展版**。
+2. **油猴脚本（备选）**：[`userscripts/douyin-auto-reply-userscript.js`](./userscripts/douyin-auto-reply-userscript.js) → [安装说明](./userscripts/README.md)
+   保留备用，万一你只能用 Tampermonkey 时仍可一试；但当前抖音版本下大概率被 CSP 拦掉。
+
+简要：装好扩展或油猴 → 打开抖音创作者中心评论管理页 → 点右下角 🤖 按钮配置（启用、模式、模板、LLM、定时扫描）→ 点开始。
 
 回复风格、内容过滤规则与本文档前述 Node.js 工具的步骤 3「LLM 生成回复」**完全一致**（同一套 system prompt + sanitize），但数据完全独立，不读写 SQLite。
