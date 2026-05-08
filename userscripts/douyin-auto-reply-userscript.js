@@ -678,5 +678,169 @@
 
   ar.generator = { generateReply };
 
+  // ============================================================
+  // engine — 主循环 + 暂停状态机
+  // ============================================================
+  const STATE = {
+    state: "idle",
+    currentWorkIdx: -1,
+    currentCommentIdx: 0,
+    abortRequested: false,
+    runId: 0,
+    lastError: null,
+  };
+
+  function getState() {
+    return { ...STATE };
+  }
+
+  function requestPause() {
+    if (STATE.state === "running") {
+      STATE.abortRequested = true;
+      appendLog("收到暂停请求，将在当前评论后停止");
+    }
+  }
+
+  async function runOnce({ trigger = "manual" } = {}) {
+    if (STATE.state === "running") {
+      appendLog(
+        `[${trigger === "schedule" ? "定时" : "手动"}] 上一轮未结束，跳过本次`,
+      );
+      return { skipped: true };
+    }
+    STATE.runId += 1;
+    STATE.state = "running";
+    STATE.abortRequested = false;
+    STATE.lastError = null;
+    appendLog(
+      `${trigger === "schedule" ? "[定时] " : ""}第 ${STATE.runId} 轮启动`,
+    );
+
+    const cfg = loadConfig();
+    if (!cfg.enabled) {
+      STATE.state = "idle";
+      appendLog("启用开关未打开，停止");
+      return { aborted: true };
+    }
+    if (
+      (cfg.mode === "template" || cfg.mode === "hybrid") &&
+      (!cfg.templates || cfg.templates.length === 0)
+    ) {
+      STATE.state = "idle";
+      appendLog("模板列表为空但模式需要模板，停止");
+      return { aborted: true };
+    }
+
+    let totalReplied = 0;
+    let consecutiveFailures = 0;
+
+    try {
+      for (let i = 0; i < cfg.worksLimit; i++) {
+        if (STATE.abortRequested) {
+          appendLog("已暂停");
+          break;
+        }
+        STATE.currentWorkIdx = i;
+        try {
+          await selectWorkByIndex(i);
+        } catch (e) {
+          appendLog(`作品 #${i + 1} 选择失败：${e.message}`);
+          continue;
+        }
+        const items = listWorkItems();
+        const workTitle =
+          (items[i]?.textContent || "")
+            .trim()
+            .slice(0, 60)
+            .replace(/\s+/g, " ") || `作品#${i + 1}`;
+        appendLog(`作品 ${i + 1}/${cfg.worksLimit}: ${workTitle}`);
+
+        try {
+          await applyUnrepliedFilter();
+        } catch (e) {
+          appendLog(`  未回复筛选失败：${e.message}`);
+          continue;
+        }
+
+        let commentSeq = 0;
+        while (!STATE.abortRequested) {
+          if (commentSeq >= 200) {
+            appendLog(`  达到本作品评论上限 200`);
+            break;
+          }
+          const c = extractFirstUnreplied();
+          if (!c) {
+            appendLog(`  本作品已无可回复评论`);
+            break;
+          }
+          commentSeq += 1;
+
+          const gen = await generateReply({
+            cfg,
+            workTitle,
+            comment: c,
+          });
+          if (gen.fatal) {
+            appendLog(
+              `  评论 #${commentSeq} LLM ${gen.status} 致命错误，停止整轮`,
+            );
+            consecutiveFailures = 99;
+            break;
+          }
+          if (!gen.text) {
+            appendLog(
+              `  评论 #${commentSeq} user=${c.username} → 跳过(${gen.reason})`,
+            );
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= 3) {
+              appendLog(`  连续 3 次失败，暂停整轮`);
+              break;
+            }
+            continue;
+          }
+
+          const sanitized = sanitizeReplyMessage(gen.text, cfg.aiSignature);
+          if (!sanitized.replyMessage) {
+            appendLog(
+              `  评论 #${commentSeq} user=${c.username} → 命中过滤(${sanitized.skipReason})，跳过`,
+            );
+            continue;
+          }
+
+          try {
+            appendLog(
+              `  评论 #${commentSeq} user=${c.username} → 发送中... (${gen.via})`,
+            );
+            await sendReply(c, sanitized.replyMessage, cfg);
+            totalReplied += 1;
+            consecutiveFailures = 0;
+            appendLog(`  评论 #${commentSeq} 已回复 ✓`);
+            await sleep(
+              randomBetween(cfg.replyDelayMinMs, cfg.replyDelayMaxMs),
+            );
+          } catch (e) {
+            appendLog(`  评论 #${commentSeq} 发送失败：${e.message}`);
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= 3) {
+              appendLog(`  连续 3 次失败，暂停整轮`);
+              break;
+            }
+          }
+        }
+        if (consecutiveFailures >= 99) break;
+      }
+    } catch (e) {
+      STATE.lastError = e.message;
+      appendLog(`引擎异常：${e.message}`);
+    } finally {
+      STATE.state = "idle";
+      STATE.currentWorkIdx = -1;
+      appendLog(`第 ${STATE.runId} 轮结束，共回复 ${totalReplied} 条`);
+    }
+    return { totalReplied };
+  }
+
+  ar.engine = { runOnce, requestPause, getState };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
