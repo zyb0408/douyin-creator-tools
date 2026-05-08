@@ -388,5 +388,64 @@
 
   ar.works = { openWorksPanel, listWorkItems, selectWorkByIndex, SELECTORS };
 
+  // ============================================================
+  // collect — 应用「未回复」筛选，提取下一条待回复
+  // ============================================================
+  async function applyUnrepliedFilter() {
+    const tab = await waitFor(
+      () => queryClickableByText(SELECTORS.unrepliedTabText),
+      { timeout: 5000 },
+    );
+    realClick(tab);
+    await sleep(600);
+  }
+
+  /**
+   * 从评论列表里找第一条"还有「回复」按钮"的评论容器。
+   * 返回 { container, replyBtn, username, commentText }，找不到返回 null。
+   */
+  function extractFirstUnreplied() {
+    const candidates = [];
+    const all = document.querySelectorAll(
+      "button, [role='button'], span, div",
+    );
+    for (const el of all) {
+      const t = (el.textContent || "").trim();
+      if (t === SELECTORS.replyBtnText && isVisible(el)) {
+        const clickable = el.closest("button, [role='button']") || el;
+        candidates.push(clickable);
+      }
+    }
+    if (candidates.length === 0) return null;
+
+    const replyBtn = candidates[0];
+    let container =
+      replyBtn.closest(
+        "[class*='comment-item'], [class*='CommentItem'], li",
+      ) || replyBtn.parentElement;
+    while (container && container.parentElement) {
+      const c = container.parentElement;
+      if (c.querySelectorAll("button, [role='button']").length > 5) break;
+      if (c.tagName === "UL" || c.tagName === "OL") break;
+      container = c;
+      if (container.getBoundingClientRect().height > 60) break;
+    }
+
+    const allText = (container.textContent || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    const lines = allText
+      .split("回复")[0]
+      .split(/\s{2,}/)
+      .filter(Boolean);
+    const username = lines[0] || "unknown";
+    const commentText =
+      lines.slice(1).join(" ") || allText.slice(0, 100);
+
+    return { container, replyBtn, username, commentText };
+  }
+
+  ar.collect = { applyUnrepliedFilter, extractFirstUnreplied };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
