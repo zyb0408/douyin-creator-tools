@@ -4,6 +4,7 @@
 // @version      0.1.0
 // @description  在抖音创作者中心评论管理页自动回复评论，支持 LLM 生成、模板、混合模式与定时扫描
 // @author       hu-shang-ma-zai
+// @match        https://creator.douyin.com/creator-micro/interactive/comment*
 // @match        https://creator.douyin.com/creator-micro/comment-manage*
 // @match        https://creator.douyin.com/creator-micro/data-center/comment*
 // @grant        GM_setValue
@@ -907,7 +908,7 @@
   // URL 守卫：离开评论管理页时暂停定时器，回来后恢复
   function installUrlGuard() {
     const isOnTargetPage = () =>
-      /\/creator-micro\/(comment-manage|data-center\/comment)/.test(
+      /\/creator-micro\/(interactive\/comment|comment-manage|data-center\/comment)/.test(
         location.pathname,
       );
     let onTarget = isOnTargetPage();

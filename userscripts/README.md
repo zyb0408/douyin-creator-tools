@@ -24,7 +24,7 @@
 
 ### 3. 验证安装
 
-1. 打开 `https://creator.douyin.com/creator-micro/comment-manage`
+1. 打开 `https://creator.douyin.com/creator-micro/interactive/comment`
 2. 登录后查看页面右下角，应看到一个蓝色 🤖 圆形悬浮按钮
 3. 点击 🤖 → 配置面板弹出 → 安装成功
 
@@ -91,7 +91,7 @@
 ### 看不到 🤖 按钮
 
 - Tampermonkey 图标有红叉 → 启用扩展
-- 当前 URL 不在 `creator.douyin.com/creator-micro/comment-manage*` → 切回该页
+- 当前 URL 不在 `creator.douyin.com/creator-micro/interactive/comment*`（或 `comment-manage*` / `data-center/comment*`）→ 切回该页
 - DevTools Console 没有 `[抖音自动回复] loaded` → `@match` 不匹配，检查脚本头是否被改
 
 ### 不回复任何评论
