@@ -221,5 +221,105 @@
     BLOCKED_PATTERNS,
   };
 
+  // ============================================================
+  // dom — 选择器与等待工具
+  // ============================================================
+  async function waitFor(predicate, { timeout = 5000, interval = 100 } = {}) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      try {
+        const result = predicate();
+        if (result) return result;
+      } catch (_) {
+        /* 忽略，继续轮询 */
+      }
+      await sleep(interval);
+    }
+    throw new Error(`waitFor timeout after ${timeout}ms`);
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    const cs = window.getComputedStyle(el);
+    return (
+      cs.visibility !== "hidden" &&
+      cs.display !== "none" &&
+      cs.opacity !== "0"
+    );
+  }
+
+  function queryAllByText(text, { tag = "*", root = document } = {}) {
+    const all = root.querySelectorAll(tag);
+    const out = [];
+    for (const el of all) {
+      if (
+        el.textContent &&
+        el.textContent.trim() === text &&
+        isVisible(el)
+      )
+        out.push(el);
+    }
+    return out;
+  }
+
+  function queryByText(text, opts) {
+    return queryAllByText(text, opts)[0] || null;
+  }
+
+  function queryClickableByText(text, root = document) {
+    // 文本完全匹配 → 兜底：包含匹配（避免抖音多语言或加省略号）
+    let el =
+      queryByText(text, { tag: "button", root }) ||
+      queryByText(text, { tag: "span", root });
+    if (el) return el.closest("button, [role='button'], a") || el;
+
+    const all = root.querySelectorAll(
+      "button, [role='button'], div, span",
+    );
+    for (const e of all) {
+      const t = (e.textContent || "").trim();
+      if (t && t.length < 30 && t.includes(text) && isVisible(e)) {
+        return e.closest("button, [role='button']") || e;
+      }
+    }
+    return null;
+  }
+
+  function realClick(el) {
+    if (!el) throw new Error("realClick: element is null");
+    el.scrollIntoView({ block: "center", behavior: "instant" });
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    for (const type of [
+      "pointerdown",
+      "mousedown",
+      "pointerup",
+      "mouseup",
+      "click",
+    ]) {
+      el.dispatchEvent(
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          view: window,
+        }),
+      );
+    }
+  }
+
+  ar.dom = {
+    waitFor,
+    isVisible,
+    queryByText,
+    queryAllByText,
+    queryClickableByText,
+    realClick,
+  };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
