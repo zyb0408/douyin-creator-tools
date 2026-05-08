@@ -996,18 +996,168 @@
 
   // 占位：完整 panel 留到 Task 14 实现
   function renderPanel() {
+    const cfg = loadConfig();
+    const st = getState();
+    const sInfo = getSchedulerInfo();
+    const nextStr =
+      sInfo.active && sInfo.nextFireAt
+        ? new Date(sInfo.nextFireAt).toLocaleTimeString() +
+          `（剩 ${Math.max(0, Math.round(sInfo.msUntilNext / 60000))} 分钟）`
+        : "未定时";
+    const escapeHtml = (s) =>
+      String(s).replace(/[<>&"']/g, (c) =>
+        ({
+          "<": "&lt;",
+          ">": "&gt;",
+          "&": "&amp;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c],
+      );
+
     uiState.root.innerHTML = `
       <div class="panel">
         <header><span class="title">🤖 抖音自动回复</span><span class="actions"><button class="collapse">—</button></span></header>
-        <div class="status">状态：待机</div>
-        <div class="body"><em>面板内容将在 Task 14 填充</em></div>
+        <div class="status ${st.state === "running" ? "running" : ""}">状态：${st.state === "running" ? `运行中（作品 ${st.currentWorkIdx + 1}）` : "待机"}</div>
+
+        <div class="body">
+          <details class="section" open>
+            <summary>基础设置</summary>
+            <div class="content">
+              <div class="row"><label>启用</label><input type="checkbox" id="enabled" ${cfg.enabled ? "checked" : ""}></div>
+              <div class="row"><label>模式</label>
+                <select id="mode">
+                  <option value="template" ${cfg.mode === "template" ? "selected" : ""}>纯模板</option>
+                  <option value="llm" ${cfg.mode === "llm" ? "selected" : ""}>纯 LLM</option>
+                  <option value="hybrid" ${cfg.mode === "hybrid" ? "selected" : ""}>混合</option>
+                </select>
+              </div>
+              <div class="row"><label>作品数 N</label><input type="number" id="worksLimit" min="1" max="50" value="${cfg.worksLimit}"></div>
+            </div>
+          </details>
+
+          <details class="section">
+            <summary>定时扫描</summary>
+            <div class="content">
+              <div class="row"><label>开启</label><input type="checkbox" id="schedEnabled" ${cfg.schedule.enabled ? "checked" : ""}></div>
+              <div class="row"><label>间隔(分钟)</label><input type="number" id="schedInterval" min="5" value="${cfg.schedule.intervalMin}"></div>
+              <div class="row"><label>立即先跑</label><input type="checkbox" id="schedImmediate" ${cfg.schedule.runImmediatelyOnStart ? "checked" : ""}></div>
+              <div class="row"><label>下次运行</label><span style="font-size:12px;color:#57606a">${nextStr}</span></div>
+            </div>
+          </details>
+
+          <details class="section">
+            <summary>自定义模板（每行一条）</summary>
+            <div class="content"><textarea id="templates">${escapeHtml((cfg.templates || []).join("\n"))}</textarea></div>
+          </details>
+
+          <details class="section">
+            <summary>LLM 配置</summary>
+            <div class="content">
+              <div class="row"><label>baseURL</label><input type="text" id="llmBase" value="${escapeHtml(cfg.llm.baseURL)}"></div>
+              <div class="row"><label>apiKey</label><input type="password" id="llmKey" value="${escapeHtml(cfg.llm.apiKey)}"></div>
+              <div class="row"><label>model</label><input type="text" id="llmModel" value="${escapeHtml(cfg.llm.model)}"></div>
+              <div class="row"><label>temperature</label><input type="number" step="0.1" id="llmTemp" value="${cfg.llm.temperature}"></div>
+              <div class="row"><label>maxTokens</label><input type="number" id="llmMax" value="${cfg.llm.maxTokens}"></div>
+              <div class="row"><label>AI 签名</label><input type="text" id="aiSig" value="${escapeHtml(cfg.aiSignature)}"></div>
+            </div>
+          </details>
+
+          <details class="section">
+            <summary>高级（延迟与打字速度）</summary>
+            <div class="content">
+              <div class="row"><label>打字最小</label><input type="number" id="typeMin" value="${cfg.typingMinMs}">ms</div>
+              <div class="row"><label>打字最大</label><input type="number" id="typeMax" value="${cfg.typingMaxMs}">ms</div>
+              <div class="row"><label>评论间隔最小</label><input type="number" id="rdMin" value="${cfg.replyDelayMinMs}">ms</div>
+              <div class="row"><label>评论间隔最大</label><input type="number" id="rdMax" value="${cfg.replyDelayMaxMs}">ms</div>
+            </div>
+          </details>
+
+          <details class="section" open>
+            <summary>日志</summary>
+            <div class="content"><div class="log" id="logBox">${escapeHtml(logBuffer.join("\n"))}</div></div>
+          </details>
+        </div>
+
+        <div class="controls">
+          <button class="btn primary" id="btnStart" ${st.state === "running" ? "disabled" : ""}>▶ 开始</button>
+          <button class="btn" id="btnPause" ${st.state !== "running" ? "disabled" : ""}>⏸ 暂停</button>
+          <button class="btn" id="btnSave">💾 保存</button>
+          <button class="btn" id="btnCopyLog">📋 复制日志</button>
+          <button class="btn" id="btnClearLog">🧹 清空日志</button>
+        </div>
       </div>
     `;
-    uiState.root.querySelector(".collapse").addEventListener("click", () => {
+    bindPanelEvents();
+  }
+
+  function bindPanelEvents() {
+    const $ = (sel) => uiState.root.querySelector(sel);
+    $(".collapse").addEventListener("click", () => {
       uiState.collapsed = true;
       render();
     });
+    $("#btnStart").addEventListener("click", () =>
+      runOnce({ trigger: "manual" }).then(() => render()),
+    );
+    $("#btnPause").addEventListener("click", () => requestPause());
+    $("#btnSave").addEventListener("click", saveFromUI);
+    $("#btnCopyLog").addEventListener("click", () =>
+      navigator.clipboard.writeText(logBuffer.join("\n")),
+    );
+    $("#btnClearLog").addEventListener("click", () => {
+      clearLog();
+      render();
+    });
   }
+
+  function saveFromUI() {
+    const $ = (sel) => uiState.root.querySelector(sel);
+    const cfg = loadConfig();
+    cfg.enabled = $("#enabled").checked;
+    cfg.mode = $("#mode").value;
+    cfg.worksLimit = Math.max(1, parseInt($("#worksLimit").value, 10) || 1);
+    cfg.schedule.enabled = $("#schedEnabled").checked;
+    const interval = parseInt($("#schedInterval").value, 10) || 30;
+    if (interval < 5) {
+      alert("定时间隔不能小于 5 分钟");
+      return;
+    }
+    cfg.schedule.intervalMin = interval;
+    cfg.schedule.runImmediatelyOnStart = $("#schedImmediate").checked;
+    cfg.templates = $("#templates")
+      .value.split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    cfg.llm.baseURL = $("#llmBase").value.trim();
+    cfg.llm.apiKey = $("#llmKey").value.trim();
+    cfg.llm.model = $("#llmModel").value.trim();
+    cfg.llm.temperature = parseFloat($("#llmTemp").value) || 0.7;
+    cfg.llm.maxTokens = parseInt($("#llmMax").value, 10) || 300;
+    cfg.aiSignature = $("#aiSig").value;
+    cfg.typingMinMs = parseInt($("#typeMin").value, 10);
+    cfg.typingMaxMs = parseInt($("#typeMax").value, 10);
+    cfg.replyDelayMinMs = parseInt($("#rdMin").value, 10);
+    cfg.replyDelayMaxMs = parseInt($("#rdMax").value, 10);
+    saveConfig(cfg);
+    appendLog("配置已保存");
+
+    // 应用定时变更
+    if (cfg.schedule.enabled) startScheduler();
+    else stopScheduler();
+    render();
+  }
+
+  // 订阅日志变化，实时刷新日志框
+  logSubscribers.add(() => {
+    if (!uiState.collapsed) {
+      const box = uiState.root?.querySelector("#logBox");
+      if (box) {
+        box.textContent = logBuffer.join("\n");
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+  });
 
   function render() {
     if (uiState.collapsed) renderFab();
