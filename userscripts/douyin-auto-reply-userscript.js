@@ -321,5 +321,72 @@
     realClick,
   };
 
+  // ============================================================
+  // selectors — 集中管理所有 DOM 选择器（页面改版时改这里）
+  // ============================================================
+  const SELECTORS = {
+    worksOpenBtnText: "选择作品",
+    worksPanelRoot:
+      '[class*="work-list"], [class*="WorkList"], [class*="works-panel"]',
+    worksItemFallbackImg: 'img[src*="aweme"]',
+    unrepliedTabText: "未回复",
+    commentListRoot: '[class*="comment-list"], [class*="CommentList"]',
+    replyBtnText: "回复",
+    sendBtnText: "发送",
+    editorContentEditable: '[contenteditable="true"]',
+  };
+
+  // ============================================================
+  // works — 打开作品面板，选第 i 个作品
+  // ============================================================
+  async function openWorksPanel() {
+    const btn = await waitFor(
+      () => queryClickableByText(SELECTORS.worksOpenBtnText),
+      { timeout: 8000 },
+    );
+    realClick(btn);
+    // 等侧边栏出现：用「兜底封面图」作为存在标志
+    await waitFor(
+      () =>
+        document.querySelectorAll(SELECTORS.worksItemFallbackImg).length >= 1,
+      { timeout: 6000 },
+    );
+    await sleep(400);
+  }
+
+  function listWorkItems() {
+    // 优先 data-e2e 等语义属性；兜底：所有带封面图的可点击块
+    const named = document.querySelectorAll(
+      '[data-e2e*="work"], [data-e2e*="aweme-item"]',
+    );
+    if (named.length > 0) return Array.from(named).filter(isVisible);
+    // 兜底：每个封面图所在的可点击容器
+    const imgs = Array.from(
+      document.querySelectorAll(SELECTORS.worksItemFallbackImg),
+    ).filter(isVisible);
+    const seen = new Set();
+    const items = [];
+    for (const img of imgs) {
+      const card =
+        img.closest('[role="button"]') || img.closest("li") || img.closest("div");
+      if (card && !seen.has(card)) {
+        seen.add(card);
+        items.push(card);
+      }
+    }
+    return items;
+  }
+
+  async function selectWorkByIndex(idx) {
+    await openWorksPanel();
+    const items = listWorkItems();
+    if (idx >= items.length)
+      throw new Error(`作品索引越界：要 #${idx} 但只有 ${items.length} 个`);
+    realClick(items[idx]);
+    await sleep(800); // 等评论区切换
+  }
+
+  ar.works = { openWorksPanel, listWorkItems, selectWorkByIndex, SELECTORS };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
