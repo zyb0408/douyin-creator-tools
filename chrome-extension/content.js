@@ -326,7 +326,12 @@
     worksPanelRoot:
       '[class*="work-list"], [class*="WorkList"], [class*="works-panel"]',
     worksItemFallbackImg: 'img[src*="aweme"]',
-    unrepliedTabText: "未回复",
+    // 评论筛选下拉触发器（"全部评论 ▾"），点开后菜单含"全部评论/未回复/包含问题/可能打扰"
+    filterTriggerSelector: ".douyin-creator-interactive-select-selection-text",
+    filterTriggerText: "全部评论",
+    unrepliedOptionText: "未回复",
+    // 评论项操作按钮（赞/回复/删除/举报），实际是 div 不是 button
+    commentActionItemSelector: '[class*="item-M3fSkJ"]',
     commentListRoot: '[class*="comment-list"], [class*="CommentList"]',
     replyBtnText: "回复",
     sendBtnText: "发送",
@@ -388,13 +393,55 @@
   // ============================================================
   // collect — 应用「未回复」筛选，提取下一条待回复
   // ============================================================
+  // 取节点自身直接的文本（排除子节点的 textContent，用来精确匹配下拉选项）
+  function directText(el) {
+    if (!el) return "";
+    return [...el.childNodes]
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.nodeValue)
+      .join("")
+      .trim();
+  }
+
   async function applyUnrepliedFilter() {
-    const tab = await waitFor(
-      () => queryClickableByText(SELECTORS.unrepliedTabText),
+    // 1. 找"全部评论 ▾"下拉触发器
+    const trigger = await waitFor(
+      () => {
+        const cands = document.querySelectorAll(SELECTORS.filterTriggerSelector);
+        for (const e of cands) {
+          if (
+            (e.textContent || "").trim() === SELECTORS.filterTriggerText &&
+            isVisible(e)
+          )
+            return e;
+        }
+        return null;
+      },
       { timeout: 5000 },
     );
-    realClick(tab);
-    await sleep(600);
+
+    // 2. 点击展开下拉（点最外层可点击祖先，确保事件被框架捕获）
+    const clickTarget =
+      trigger.closest("[role='button'], [class*='select']") || trigger;
+    realClick(clickTarget);
+    await sleep(400);
+
+    // 3. 在新出现的下拉里找 directText === "未回复" 的元素并点击
+    const option = await waitFor(
+      () => {
+        for (const e of document.querySelectorAll("*")) {
+          if (
+            directText(e) === SELECTORS.unrepliedOptionText &&
+            isVisible(e)
+          )
+            return e;
+        }
+        return null;
+      },
+      { timeout: 3000 },
+    );
+    realClick(option);
+    await sleep(800); // 等评论列表刷新
   }
 
   /**
@@ -402,42 +449,44 @@
    * 返回 { container, replyBtn, username, commentText }，找不到返回 null。
    */
   function extractFirstUnreplied() {
-    const candidates = [];
-    const all = document.querySelectorAll(
-      "button, [role='button'], span, div",
-    );
-    for (const el of all) {
-      const t = (el.textContent || "").trim();
-      if (t === SELECTORS.replyBtnText && isVisible(el)) {
-        const clickable = el.closest("button, [role='button']") || el;
-        candidates.push(clickable);
+    // 直接找 class*="item-M3fSkJ" 且 directText === "回复" 的元素
+    const items = document.querySelectorAll(SELECTORS.commentActionItemSelector);
+    let replyBtn = null;
+    for (const el of items) {
+      if (
+        directText(el) === SELECTORS.replyBtnText &&
+        isVisible(el)
+      ) {
+        replyBtn = el;
+        break;
       }
     }
-    if (candidates.length === 0) return null;
+    if (!replyBtn) return null;
 
-    const replyBtn = candidates[0];
-    let container =
-      replyBtn.closest(
-        "[class*='comment-item'], [class*='CommentItem'], li",
-      ) || replyBtn.parentElement;
+    // 评论容器：往上找到一个面积合理的祖先
+    let container = replyBtn.parentElement;
     while (container && container.parentElement) {
       const c = container.parentElement;
-      if (c.querySelectorAll("button, [role='button']").length > 5) break;
+      // 一旦走到含多组操作按钮的列表层就停
+      if (
+        c.querySelectorAll(SELECTORS.commentActionItemSelector).length > 4
+      )
+        break;
       if (c.tagName === "UL" || c.tagName === "OL") break;
       container = c;
-      if (container.getBoundingClientRect().height > 60) break;
+      if (container.getBoundingClientRect().height > 80) break;
     }
 
+    // 抽用户名/评论文本：去掉尾部操作按钮文本
     const allText = (container.textContent || "")
       .trim()
       .replace(/\s+/g, " ");
-    const lines = allText
-      .split("回复")[0]
-      .split(/\s{2,}/)
-      .filter(Boolean);
+    // 抖音操作行通常是 "赞 N 回复 删除 举报" 或 "回复 删除 举报"
+    const stripped = allText.replace(/(?:赞\s*\d*\s*)?回复\s*删除\s*举报.*$/, "").trim();
+    const lines = stripped.split(/\s{2,}/).filter(Boolean);
     const username = lines[0] || "unknown";
     const commentText =
-      lines.slice(1).join(" ") || allText.slice(0, 100);
+      lines.slice(1).join(" ") || stripped.slice(0, 100);
 
     return { container, replyBtn, username, commentText };
   }
@@ -730,101 +779,74 @@
 
     let totalReplied = 0;
     let consecutiveFailures = 0;
+    const maxReplies = Math.max(1, cfg.worksLimit | 0);
+    const workTitle = "（当前作品）";
 
     try {
-      for (let i = 0; i < cfg.worksLimit; i++) {
-        if (STATE.abortRequested) {
-          appendLog("已暂停");
+      appendLog(`本轮最多回复 ${maxReplies} 条`);
+
+      try {
+        await applyUnrepliedFilter();
+      } catch (e) {
+        appendLog(`未回复筛选失败：${e.message}`);
+        return { totalReplied: 0 };
+      }
+
+      let commentSeq = 0;
+      while (!STATE.abortRequested && commentSeq < maxReplies) {
+        const c = extractFirstUnreplied();
+        if (!c) {
+          appendLog(`已无可回复评论`);
           break;
         }
-        STATE.currentWorkIdx = i;
-        try {
-          await selectWorkByIndex(i);
-        } catch (e) {
-          appendLog(`作品 #${i + 1} 选择失败：${e.message}`);
+        commentSeq += 1;
+
+        const gen = await generateReply({ cfg, workTitle, comment: c });
+        if (gen.fatal) {
+          appendLog(
+            `评论 #${commentSeq} LLM ${gen.status} 致命错误，停止本轮`,
+          );
+          break;
+        }
+        if (!gen.text) {
+          appendLog(
+            `评论 #${commentSeq} user=${c.username} → 跳过(${gen.reason})`,
+          );
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= 3) {
+            appendLog(`连续 3 次失败，暂停本轮`);
+            break;
+          }
           continue;
         }
-        const items = listWorkItems();
-        const workTitle =
-          (items[i]?.textContent || "")
-            .trim()
-            .slice(0, 60)
-            .replace(/\s+/g, " ") || `作品#${i + 1}`;
-        appendLog(`作品 ${i + 1}/${cfg.worksLimit}: ${workTitle}`);
 
-        try {
-          await applyUnrepliedFilter();
-        } catch (e) {
-          appendLog(`  未回复筛选失败：${e.message}`);
+        const sanitized = sanitizeReplyMessage(gen.text, cfg.aiSignature);
+        if (!sanitized.replyMessage) {
+          appendLog(
+            `评论 #${commentSeq} user=${c.username} → 命中过滤(${sanitized.skipReason})，跳过`,
+          );
           continue;
         }
 
-        let commentSeq = 0;
-        while (!STATE.abortRequested) {
-          if (commentSeq >= 200) {
-            appendLog(`  达到本作品评论上限 200`);
+        try {
+          appendLog(
+            `评论 #${commentSeq} user=${c.username} → 发送中... (${gen.via})`,
+          );
+          await sendReply(c, sanitized.replyMessage, cfg);
+          totalReplied += 1;
+          consecutiveFailures = 0;
+          appendLog(`评论 #${commentSeq} 已回复 ✓`);
+          await sleep(
+            randomBetween(cfg.replyDelayMinMs, cfg.replyDelayMaxMs),
+          );
+        } catch (e) {
+          appendLog(`评论 #${commentSeq} 发送失败：${e.message}`);
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= 3) {
+            appendLog(`连续 3 次失败，暂停本轮`);
             break;
-          }
-          const c = extractFirstUnreplied();
-          if (!c) {
-            appendLog(`  本作品已无可回复评论`);
-            break;
-          }
-          commentSeq += 1;
-
-          const gen = await generateReply({
-            cfg,
-            workTitle,
-            comment: c,
-          });
-          if (gen.fatal) {
-            appendLog(
-              `  评论 #${commentSeq} LLM ${gen.status} 致命错误，停止整轮`,
-            );
-            consecutiveFailures = 99;
-            break;
-          }
-          if (!gen.text) {
-            appendLog(
-              `  评论 #${commentSeq} user=${c.username} → 跳过(${gen.reason})`,
-            );
-            consecutiveFailures += 1;
-            if (consecutiveFailures >= 3) {
-              appendLog(`  连续 3 次失败，暂停整轮`);
-              break;
-            }
-            continue;
-          }
-
-          const sanitized = sanitizeReplyMessage(gen.text, cfg.aiSignature);
-          if (!sanitized.replyMessage) {
-            appendLog(
-              `  评论 #${commentSeq} user=${c.username} → 命中过滤(${sanitized.skipReason})，跳过`,
-            );
-            continue;
-          }
-
-          try {
-            appendLog(
-              `  评论 #${commentSeq} user=${c.username} → 发送中... (${gen.via})`,
-            );
-            await sendReply(c, sanitized.replyMessage, cfg);
-            totalReplied += 1;
-            consecutiveFailures = 0;
-            appendLog(`  评论 #${commentSeq} 已回复 ✓`);
-            await sleep(
-              randomBetween(cfg.replyDelayMinMs, cfg.replyDelayMaxMs),
-            );
-          } catch (e) {
-            appendLog(`  评论 #${commentSeq} 发送失败：${e.message}`);
-            consecutiveFailures += 1;
-            if (consecutiveFailures >= 3) {
-              appendLog(`  连续 3 次失败，暂停整轮`);
-              break;
-            }
           }
         }
-        if (consecutiveFailures >= 99) break;
       }
     } catch (e) {
       STATE.lastError = e.message;
@@ -1029,7 +1051,7 @@
                   <option value="hybrid" ${cfg.mode === "hybrid" ? "selected" : ""}>混合</option>
                 </select>
               </div>
-              <div class="row"><label>作品数 N</label><input type="number" id="worksLimit" min="1" max="50" value="${cfg.worksLimit}"></div>
+              <div class="row"><label>最多回复条数</label><input type="number" id="worksLimit" min="1" max="200" value="${cfg.worksLimit}"></div>
             </div>
           </details>
 
