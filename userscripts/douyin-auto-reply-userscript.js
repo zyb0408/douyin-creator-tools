@@ -141,5 +141,85 @@
     logSubscribers,
   };
 
+  // ============================================================
+  // sanitize — 内容过滤（与 lib/llm-reply-generator.mjs 完全一致）
+  // ============================================================
+  const MAX_REPLY_MESSAGE_CHARS = 400;
+  const BLOCKED_PATTERNS = [
+    /微信/i,
+    /vx/i,
+    /v信/i,
+    /加我/i,
+    /私信我/i,
+    /联系方式/i,
+    /\d{8,}/,
+  ];
+
+  function normalizeText(v = "") {
+    return String(v ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function truncateReplyMessage(text) {
+    const src = String(text ?? "");
+    const cps = [...src];
+    if (cps.length <= MAX_REPLY_MESSAGE_CHARS)
+      return { text: src, truncated: false };
+    return {
+      text: cps.slice(0, MAX_REPLY_MESSAGE_CHARS).join(""),
+      truncated: true,
+    };
+  }
+
+  function replaceStraightDoubleQuotes(text) {
+    let open = true;
+    return text.replace(/"/g, () => {
+      const n = open ? "“" : "”";
+      open = !open;
+      return n;
+    });
+  }
+
+  function sanitizeReplyMessage(rawText, aiSignature) {
+    const sig = aiSignature || "";
+    const stripped = String(rawText ?? "")
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/^here'?s a thinking process:?.*$/gim, "");
+    const normalized = normalizeText(stripped)
+      .replace(/\r?\n+/g, " ")
+      .replace(/\s{2,}/g, " ");
+    const quoted = replaceStraightDoubleQuotes(normalized);
+    const { text, truncated } = truncateReplyMessage(quoted);
+
+    if (!normalizeText(text))
+      return { replyMessage: "", skipReason: "empty_reply", truncated };
+
+    for (const pat of BLOCKED_PATTERNS) {
+      if (pat.test(text))
+        return { replyMessage: "", skipReason: "blocked_content", truncated };
+    }
+
+    const sigLen = sig.length;
+    let finalText = text;
+    if (finalText.length + sigLen <= MAX_REPLY_MESSAGE_CHARS) {
+      finalText = finalText + sig;
+    } else if (MAX_REPLY_MESSAGE_CHARS - sigLen > 0) {
+      finalText = finalText.slice(0, MAX_REPLY_MESSAGE_CHARS - sigLen) + sig;
+    } else {
+      finalText = sig;
+    }
+    return {
+      replyMessage: finalText,
+      skipReason: "",
+      truncated: truncated || finalText.length > text.length,
+    };
+  }
+
+  ar.sanitize = {
+    sanitizeReplyMessage,
+    normalizeText,
+    truncateReplyMessage,
+    BLOCKED_PATTERNS,
+  };
+
   console.log(`${TAG} loaded v${VERSION}`);
 })();
