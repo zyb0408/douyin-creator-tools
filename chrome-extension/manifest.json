@@ -3,10 +3,13 @@
   "name": "抖音创作者自动回复助手",
   "version": "0.1.0",
   "description": "在抖音创作者中心评论管理页自动回复评论，支持 LLM 生成、模板、混合模式与定时扫描。",
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms", "tabs"],
   "host_permissions": [
     "https://creator.douyin.com/*"
   ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
   "content_scripts": [
     {
       "matches": [

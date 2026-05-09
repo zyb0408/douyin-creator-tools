@@ -1085,35 +1085,23 @@
   ar.engine = { runOnce, requestPause, getState };
 
   // ============================================================
-  // scheduler — setTimeout 递归调度
+  // scheduler — chrome.alarms 精确定时（SW 管理 alarm，不受标签后台节流）
   // ============================================================
-  const sched = { timer: null, nextFireAt: 0 };
+  const sched = { active: false, nextFireAt: 0 };
 
   function clearScheduler() {
-    if (sched.timer) {
-      clearTimeout(sched.timer);
-      sched.timer = null;
-      sched.nextFireAt = 0;
-    }
+    sched.active = false;
+    sched.nextFireAt = 0;
+    chrome.runtime.sendMessage({ type: "SCHEDULE_STOP" }).catch(() => {});
   }
 
   function scheduleNext(intervalMs) {
-    clearScheduler();
+    const intervalMin = intervalMs / 60_000;
+    sched.active = true;
     sched.nextFireAt = Date.now() + intervalMs;
-    sched.timer = setTimeout(async () => {
-      sched.timer = null;
-      const cfg = loadConfig();
-      if (!cfg.schedule.enabled) return; // 期间被关闭
-      try {
-        await runOnce({ trigger: "schedule" });
-      } catch (e) {
-        appendLog(`定时轮异常：${e.message}`);
-      }
-      // 排下一次（loadConfig 重新读，间隔可能被改）
-      const c2 = loadConfig();
-      if (c2.schedule.enabled)
-        scheduleNext(c2.schedule.intervalMin * 60_000);
-    }, intervalMs);
+    chrome.runtime
+      .sendMessage({ type: "SCHEDULE_START", intervalMin })
+      .catch(() => {});
   }
 
   function startScheduler() {
@@ -1123,7 +1111,7 @@
       appendLog(`定时间隔小于 5 分钟，已忽略`);
       return;
     }
-    appendLog(`定时已开启，间隔 ${cfg.schedule.intervalMin} 分钟`);
+    appendLog(`定时已开启，间隔 ${cfg.schedule.intervalMin} 分钟（后台精确计时）`);
     if (cfg.schedule.runImmediatelyOnStart) {
       runOnce({ trigger: "schedule" }).then(() =>
         scheduleNext(cfg.schedule.intervalMin * 60_000),
@@ -1140,34 +1128,34 @@
 
   function getSchedulerInfo() {
     return {
-      active: !!sched.timer,
+      active: sched.active,
       nextFireAt: sched.nextFireAt,
       msUntilNext: sched.nextFireAt ? sched.nextFireAt - Date.now() : 0,
     };
   }
 
-  // URL 守卫：离开评论管理页时暂停定时器，回来后恢复
+  // 监听来自 service worker 的定时触发消息
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "SCHEDULE_FIRE") {
+      // 页面不在激活状态也允许扫描（用户之前选了定时，说明不想错过）
+      // runOnce 内部会检查 STATE.state === "running" 防堆积
+      runOnce({ trigger: "schedule" })
+        .then(() => {
+          // 扫描完成后刷新倒计时
+          const cfg = loadConfig();
+          if (cfg.schedule.enabled) {
+            sched.nextFireAt =
+              Date.now() + cfg.schedule.intervalMin * 60_000;
+          }
+        })
+        .catch((e) => appendLog(`定时轮异常：${e.message}`));
+    }
+  });
+
+  // URL 守卫：离开评论管理页不再暂停定时（SW 侧由 alarm 管理），
+  // 仅用于 UI 状态提示
   function installUrlGuard() {
-    const isOnTargetPage = () =>
-      /\/creator-micro\/(interactive\/comment|comment-manage|data-center\/comment)/.test(
-        location.pathname,
-      );
-    let onTarget = isOnTargetPage();
-    const obs = new MutationObserver(() => {
-      const now = isOnTargetPage();
-      if (now === onTarget) return;
-      onTarget = now;
-      const cfg = loadConfig();
-      if (!cfg.schedule.enabled) return;
-      if (now) {
-        appendLog("回到评论管理页，恢复定时");
-        startScheduler();
-      } else {
-        appendLog("离开评论管理页，暂停定时");
-        clearScheduler();
-      }
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
+    // alarm 层面已由 SW 全局管理，这里只保留兼容接口不做事
   }
 
   ar.scheduler = {
