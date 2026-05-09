@@ -453,6 +453,8 @@
     const items = document.querySelectorAll(SELECTORS.commentActionItemSelector);
     let replyBtn = null;
     for (const el of items) {
+      // 跳过本次扫描已处理过的（DOM 标记）
+      if (el.dataset && el.dataset.douyinArReplied === "1") continue;
       if (
         directText(el) === SELECTORS.replyBtnText &&
         isVisible(el)
@@ -863,6 +865,10 @@
     let consecutiveFailures = 0;
     const maxReplies = Math.max(1, cfg.worksLimit | 0); // 安全上限，用户不可见
     const workTitle = "（当前作品）";
+    // 本次扫描内已处理过的评论签名集合（防同一条被反复抓回）
+    const processedSignatures = new Set();
+    const sigOf = (c) =>
+      (c.username || "").trim() + "|" + (c.commentText || "").trim().slice(0, 40);
 
     try {
       appendLog(`开始扫描当前作品的所有未回复评论`);
@@ -881,6 +887,18 @@
           appendLog(`已无可回复评论`);
           break;
         }
+        const sig = sigOf(c);
+        // 签名已处理过 → 标记节点防再抓 + 跳过；连续 3 次都是已处理就停
+        if (processedSignatures.has(sig)) {
+          if (c.replyBtn && c.replyBtn.dataset)
+            c.replyBtn.dataset.douyinArReplied = "1";
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= 3) {
+            appendLog(`重复抓到已处理评论，可能页面未刷新，停止扫描`);
+            break;
+          }
+          continue;
+        }
         commentSeq += 1;
 
         const gen = await generateReply({ cfg, workTitle, comment: c });
@@ -894,6 +912,10 @@
           appendLog(
             `评论 #${commentSeq} user=${c.username} → 跳过(${gen.reason})`,
           );
+          // 标记已处理避免再抓
+          processedSignatures.add(sig);
+          if (c.replyBtn && c.replyBtn.dataset)
+            c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
           if (consecutiveFailures >= 3) {
             appendLog(`连续 3 次失败，暂停本轮`);
@@ -907,6 +929,9 @@
           appendLog(
             `评论 #${commentSeq} user=${c.username} → 命中过滤(${sanitized.skipReason})，跳过`,
           );
+          processedSignatures.add(sig);
+          if (c.replyBtn && c.replyBtn.dataset)
+            c.replyBtn.dataset.douyinArReplied = "1";
           continue;
         }
 
@@ -915,6 +940,10 @@
             `评论 #${commentSeq} user=${c.username} → 发送中... (${gen.via})`,
           );
           await sendReply(c, sanitized.replyMessage, cfg);
+          // 立刻标记，防止下一轮 extract 抓到同一条
+          processedSignatures.add(sig);
+          if (c.replyBtn && c.replyBtn.dataset)
+            c.replyBtn.dataset.douyinArReplied = "1";
           totalReplied += 1;
           consecutiveFailures = 0;
           appendLog(`评论 #${commentSeq} 已回复 ✓`);
@@ -923,6 +952,10 @@
           );
         } catch (e) {
           appendLog(`评论 #${commentSeq} 发送失败：${e.message}`);
+          // 失败也标记，不再尝试该按钮（避免重复发送给同一条）
+          processedSignatures.add(sig);
+          if (c.replyBtn && c.replyBtn.dataset)
+            c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
           if (consecutiveFailures >= 3) {
             appendLog(`连续 3 次失败，暂停本轮`);
