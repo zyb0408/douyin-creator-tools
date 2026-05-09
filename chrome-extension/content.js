@@ -423,16 +423,28 @@
       .trim();
   }
 
-  async function applyUnrepliedFilter() {
-    // 1. 找筛选下拉触发器（可能当前显示"全部评论"或"未回复"）
+  // 辅助：在当前打开的下拉里找某个 directText 匹配的选项并点击
+  async function clickDropdownOption(text) {
+    const option = await waitFor(
+      () => {
+        for (const e of document.querySelectorAll("*")) {
+          if (directText(e) === text && isVisible(e)) return e;
+        }
+        return null;
+      },
+      { timeout: 3000 },
+    );
+    realClick(option);
+  }
+
+  // 辅助：点开筛选下拉（找到触发器并点击）
+  async function openFilterDropdown(matchText) {
     const trigger = await waitFor(
       () => {
         const cands = document.querySelectorAll(SELECTORS.filterTriggerSelector);
         for (const e of cands) {
-          const t = (e.textContent || "").trim();
           if (
-            (t === SELECTORS.filterTriggerText ||
-              t === SELECTORS.unrepliedOptionText) &&
+            (e.textContent || "").trim() === matchText &&
             isVisible(e)
           )
             return e;
@@ -441,29 +453,28 @@
       },
       { timeout: 5000 },
     );
-
-    // 2. 点击展开下拉（点最外层可点击祖先，确保事件被框架捕获）
     const clickTarget =
       trigger.closest("[role='button'], [class*='select']") || trigger;
     realClick(clickTarget);
     await sleep(400);
+  }
 
-    // 3. 在新出现的下拉里找 directText === "未回复" 的元素并点击
-    const option = await waitFor(
-      () => {
-        for (const e of document.querySelectorAll("*")) {
-          if (
-            directText(e) === SELECTORS.unrepliedOptionText &&
-            isVisible(e)
-          )
-            return e;
-        }
-        return null;
-      },
-      { timeout: 3000 },
-    );
-    realClick(option);
-    await sleep(1500); // 等评论列表刷新（API 请求 + React 渲染）
+  async function applyUnrepliedFilter() {
+    // 先检查当前筛选状态，不在"全部评论"就先复位
+    const currentTrigger = document.querySelector(SELECTORS.filterTriggerSelector);
+    const currentText = (currentTrigger?.textContent || "").trim();
+
+    if (currentText && currentText !== SELECTORS.filterTriggerText) {
+      // 当前不在"全部评论"——先复位（不管是在"未回复"还是"包含问题"等）
+      await openFilterDropdown(currentText);
+      await clickDropdownOption(SELECTORS.filterTriggerText);
+      await sleep(800);
+    }
+
+    // 现在从"全部评论"切到"未回复"，触发一次全量 API 请求
+    await openFilterDropdown(SELECTORS.filterTriggerText);
+    await clickDropdownOption(SELECTORS.unrepliedOptionText);
+    await sleep(2000); // 等评论列表刷新（API 请求 + React 渲染）
   }
 
   /**
@@ -725,18 +736,15 @@
   // llm — OpenAI 兼容接口客户端
   // ============================================================
   const SYSTEM_PROMPT_HEADER =
-    "你是抖音创作者评论助手。请只输出一条可以直接发送的中文回复，不要解释，不要加引号，不要分点。";
+    "你是一个有用的个人助手。";
 
   function buildPrompt({ workTitle, comment }) {
     return [
       SYSTEM_PROMPT_HEADER,
       "",
       "要求：",
-      "1. 回复自然、真诚、简短，尽量像真人。",
-      "2. 不要引流，不要留联系方式，不要让用户私信。",
-      "3. 不要夸大承诺，不要出现营销腔。",
-      "4. 如果评论带图但你看不到图片内容，不要编造图片细节。",
-      "5. 最终回复控制在 80 字内，绝对不要超过 400 字。",
+      "1.按照用户的评论进行回复。",
+      "2. 最终回复控制在 100 字内，绝对不要超过 400 字。",
       "",
       `作品标题：${normalizeText(workTitle) || "未知作品"}`,
       `用户昵称：${normalizeText(comment.username || "")}`,
