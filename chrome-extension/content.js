@@ -853,6 +853,11 @@
   // ============================================================
   // engine — 主循环 + 暂停状态机
   // ============================================================
+  // 页面会话级别已回复签名集合：跨 scan 持久，防止定时扫描重复回复
+  const repliedSignatures = new Set();
+  const sigOf = (c) =>
+    (c.username || "").trim() + "|" + (c.commentText || "").trim().slice(0, 40);
+
   const STATE = {
     state: "idle",
     currentWorkIdx: -1,
@@ -914,9 +919,6 @@
     const processCurrentWork = async (workTitle) => {
       let replied = 0;
       let consecutiveFailures = 0;
-      const processedSignatures = new Set();
-      const sigOf = (c) =>
-        (c.username || "").trim() + "|" + (c.commentText || "").trim().slice(0, 40);
 
       try {
         await applyUnrepliedFilter();
@@ -939,7 +941,7 @@
           continue;
         }
         const sig = sigOf(c);
-        if (processedSignatures.has(sig)) {
+        if (repliedSignatures.has(sig)) {
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
@@ -972,7 +974,7 @@
           appendLog(
             `  评论 #${commentSeq} → 跳过(${gen.reason})，耗时 ${tMs}ms`,
           );
-          processedSignatures.add(sig);
+          repliedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
@@ -991,7 +993,7 @@
           appendLog(
             `  评论 #${commentSeq} → 命中过滤(${sanitized.skipReason})，跳过`,
           );
-          processedSignatures.add(sig);
+          repliedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           continue;
@@ -1006,7 +1008,7 @@
         try {
           appendLog(`  评论 #${commentSeq} 发送中...`);
           await sendReply(c, sanitized.replyMessage, cfg);
-          processedSignatures.add(sig);
+          repliedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           replied += 1;
@@ -1017,7 +1019,7 @@
           );
         } catch (e) {
           appendLog(`  评论 #${commentSeq} 发送失败：${e.message}`);
-          processedSignatures.add(sig);
+          repliedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
