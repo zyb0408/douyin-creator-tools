@@ -29,6 +29,16 @@
       temperature: 0.7,
       maxTokens: 300,
     },
+    systemPrompt: [
+      "你是抖音创作者评论助手。请只输出一条可以直接发送的中文回复，不要解释，不要加引号，不要分点。",
+      "",
+      "要求：",
+      "1. 回复自然、真诚、简短，尽量像真人。",
+      "2. 不要引流，不要留联系方式，不要让用户私信。",
+      "3. 不要夸大承诺，不要出现营销腔。",
+      "4. 如果评论带图但你看不到图片内容，不要编造图片细节。",
+      "5. 最终回复控制在 80 字内，绝对不要超过 400 字。",
+    ].join("\n"),
     aiSignature: "【沪上码仔AI自动回复，注意甄别】",
     typingMinMs: 30,
     typingMaxMs: 80,
@@ -735,17 +745,6 @@
   // ============================================================
   // llm — OpenAI 兼容接口客户端
   // ============================================================
-  const SYSTEM_PROMPT = [
-    "你是抖音创作者评论助手。请只输出一条可以直接发送的中文回复，不要解释，不要加引号，不要分点。",
-    "",
-    "要求：",
-    "1. 回复自然、真诚、简短，尽量像真人。",
-    "2. 不要引流，不要留联系方式，不要让用户私信。",
-    "3. 不要夸大承诺，不要出现营销腔。",
-    "4. 如果评论带图但你看不到图片内容，不要编造图片细节。",
-    "5. 最终回复控制在 80 字内，绝对不要超过 400 字。",
-  ].join("\n");
-
   function buildUserPrompt({ workTitle, comment }) {
     return [
       `作品标题：${normalizeText(workTitle) || "未知作品"}`,
@@ -756,7 +755,7 @@
   }
 
   async function callLLM(
-    { llmConfig, workTitle, comment },
+    { llmConfig, workTitle, comment, systemPrompt },
     { timeoutMs = 15000 } = {},
   ) {
     const url =
@@ -766,7 +765,7 @@
       temperature: llmConfig.temperature,
       max_tokens: llmConfig.maxTokens,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         { role: "user", content: buildUserPrompt({ workTitle, comment }) },
       ],
       // 禁用 reasoning model 的思考链输出（与 Node 版 lib/llm-reply-generator 对齐）
@@ -804,7 +803,7 @@
     }
   }
 
-  ar.llm = { buildUserPrompt, SYSTEM_PROMPT, callLLM };
+  ar.llm = { buildUserPrompt, callLLM };
 
   // ============================================================
   // generator — 三种模式：template / llm / hybrid
@@ -820,7 +819,7 @@
 
     if (mode === "llm") {
       try {
-        const raw = await callLLM({ llmConfig: cfg.llm, workTitle, comment });
+        const raw = await callLLM({ llmConfig: cfg.llm, workTitle, comment, systemPrompt: cfg.systemPrompt });
         return { text: raw, via: "llm" };
       } catch (e) {
         return {
@@ -833,7 +832,7 @@
 
     if (mode === "hybrid") {
       try {
-        const raw = await callLLM({ llmConfig: cfg.llm, workTitle, comment });
+        const raw = await callLLM({ llmConfig: cfg.llm, workTitle, comment, systemPrompt: cfg.systemPrompt });
         return { text: raw, via: "llm" };
       } catch (e) {
         // 401/429 时不回退（避免烧 quota），让上层中止整轮
@@ -1312,6 +1311,7 @@
               <div class="row"><label>model</label><input type="text" id="llmModel" value="${escapeHtml(cfg.llm.model)}"></div>
               <div class="row"><label>temperature</label><input type="number" step="0.1" id="llmTemp" value="${cfg.llm.temperature}"></div>
               <div class="row"><label>maxTokens</label><input type="number" id="llmMax" value="${cfg.llm.maxTokens}"></div>
+              <div class="row" style="flex-direction:column;align-items:flex-start;gap:4px"><label style="flex:0 0 auto">系统提示词</label><textarea id="systemPrompt" style="min-height:120px">${escapeHtml(cfg.systemPrompt)}</textarea></div>
             </div>
           </details>
 
@@ -1421,6 +1421,7 @@
     cfg.llm.model = $("#llmModel").value.trim();
     cfg.llm.temperature = parseFloat($("#llmTemp").value) || 0.7;
     cfg.llm.maxTokens = parseInt($("#llmMax").value, 10) || 300;
+    cfg.systemPrompt = $("#systemPrompt").value.trim() || cfg.systemPrompt;
     cfg.aiSignature = $("#aiSig").value;
     cfg.typingMinMs = parseInt($("#typeMin").value, 10);
     cfg.typingMaxMs = parseInt($("#typeMax").value, 10);
