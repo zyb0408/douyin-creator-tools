@@ -181,7 +181,7 @@
   function sanitizeReplyMessage(rawText, aiSignature) {
     const sig = aiSignature || "";
     const stripped = String(rawText ?? "")
-      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/<(?:think|thinking|reasoning|thought)>[\s\S]*?<\/(?:think|thinking|reasoning|thought)>/gi, "")
       .replace(/^here'?s a thinking process:?.*$/gim, "");
     const normalized = normalizeText(stripped)
       .replace(/\r?\n+/g, " ")
@@ -515,7 +515,7 @@
       .trim()
       .replace(/\s+/g, " ");
     const timeRe =
-      /(\d+\s*[小时分钟天秒]前|昨天\s*\d{1,2}[:：]\d{1,2}|前天\s*\d{1,2}[:：]\d{1,2}|刚刚|\d{1,2}-\d{1,2}\s*\d{1,2}[:：]\d{1,2})/;
+      /(\d+\s*[小时分钟天周月秒]前|昨天\s*\d{1,2}[:：]\d{1,2}|前天\s*\d{1,2}[:：]\d{1,2}|刚刚|\d{1,2}-\d{1,2}(?:\s*\d{1,2}[:：]\d{1,2})?|\d{4}-\d{1,2}-\d{1,2}(?:\s*\d{1,2}[:：]\d{1,2})?)/;
     const m = allText.match(timeRe);
     let username = "unknown";
     let body = allText;
@@ -756,6 +756,8 @@
       messages: [
         { role: "user", content: buildPrompt({ workTitle, comment }) },
       ],
+      // 禁用 reasoning model 的思考链输出（与 Node 版 lib/llm-reply-generator 对齐）
+      chat_template_kwargs: { enable_thinking: false },
     };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -947,7 +949,17 @@
         }
         commentSeq += 1;
 
+        // 评论摘要日志（用户名 + 原文截断）
+        const commentPreview =
+          (c.commentText || "").slice(0, 40) +
+          ((c.commentText || "").length > 40 ? "…" : "");
+        appendLog(
+          `  评论 #${commentSeq} user=${c.username} | 原文: "${commentPreview}"`,
+        );
+        appendLog(`  评论 #${commentSeq} 调用 ${cfg.mode} 生成回复...`);
+        const tStart = Date.now();
         const gen = await generateReply({ cfg, workTitle, comment: c });
+        const tMs = Date.now() - tStart;
         if (gen.fatal) {
           appendLog(
             `  评论 #${commentSeq} LLM ${gen.status} 致命错误，停止`,
@@ -956,7 +968,7 @@
         }
         if (!gen.text) {
           appendLog(
-            `  评论 #${commentSeq} user=${c.username} → 跳过(${gen.reason})`,
+            `  评论 #${commentSeq} → 跳过(${gen.reason})，耗时 ${tMs}ms`,
           );
           processedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
@@ -968,11 +980,14 @@
           }
           continue;
         }
+        appendLog(
+          `  评论 #${commentSeq} 生成完成 (via ${gen.via}, ${tMs}ms)`,
+        );
 
         const sanitized = sanitizeReplyMessage(gen.text, cfg.aiSignature);
         if (!sanitized.replyMessage) {
           appendLog(
-            `  评论 #${commentSeq} user=${c.username} → 命中过滤(${sanitized.skipReason})，跳过`,
+            `  评论 #${commentSeq} → 命中过滤(${sanitized.skipReason})，跳过`,
           );
           processedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
@@ -980,10 +995,14 @@
           continue;
         }
 
+        // 显示最终发送内容（截断）
+        const replyPreview =
+          sanitized.replyMessage.slice(0, 60) +
+          (sanitized.replyMessage.length > 60 ? "…" : "");
+        appendLog(`  评论 #${commentSeq} 回复内容: "${replyPreview}"`);
+
         try {
-          appendLog(
-            `  评论 #${commentSeq} user=${c.username} → 发送中... (${gen.via})`,
-          );
+          appendLog(`  评论 #${commentSeq} 发送中...`);
           await sendReply(c, sanitized.replyMessage, cfg);
           processedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
