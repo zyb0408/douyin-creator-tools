@@ -735,17 +735,19 @@
   // ============================================================
   // llm — OpenAI 兼容接口客户端
   // ============================================================
-  const SYSTEM_PROMPT_HEADER =
-    "你是一个有用的个人助手。";
+  const SYSTEM_PROMPT = [
+    "你是抖音创作者评论助手。请只输出一条可以直接发送的中文回复，不要解释，不要加引号，不要分点。",
+    "",
+    "要求：",
+    "1. 回复自然、真诚、简短，尽量像真人。",
+    "2. 不要引流，不要留联系方式，不要让用户私信。",
+    "3. 不要夸大承诺，不要出现营销腔。",
+    "4. 如果评论带图但你看不到图片内容，不要编造图片细节。",
+    "5. 最终回复控制在 80 字内，绝对不要超过 400 字。",
+  ].join("\n");
 
-  function buildPrompt({ workTitle, comment }) {
+  function buildUserPrompt({ workTitle, comment }) {
     return [
-      SYSTEM_PROMPT_HEADER,
-      "",
-      "要求：",
-      "1.按照用户的评论进行回复。",
-      "2. 最终回复控制在 100 字内，绝对不要超过 400 字。",
-      "",
       `作品标题：${normalizeText(workTitle) || "未知作品"}`,
       `用户昵称：${normalizeText(comment.username || "")}`,
       `评论内容：${normalizeText(comment.commentText || "")}`,
@@ -764,7 +766,8 @@
       temperature: llmConfig.temperature,
       max_tokens: llmConfig.maxTokens,
       messages: [
-        { role: "user", content: buildPrompt({ workTitle, comment }) },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserPrompt({ workTitle, comment }) },
       ],
       // 禁用 reasoning model 的思考链输出（与 Node 版 lib/llm-reply-generator 对齐）
       chat_template_kwargs: { enable_thinking: false },
@@ -801,7 +804,7 @@
     }
   }
 
-  ar.llm = { buildPrompt, callLLM };
+  ar.llm = { buildUserPrompt, SYSTEM_PROMPT, callLLM };
 
   // ============================================================
   // generator — 三种模式：template / llm / hybrid
@@ -1102,7 +1105,7 @@
   function clearScheduler() {
     sched.active = false;
     sched.nextFireAt = 0;
-    chrome.runtime.sendMessage({ type: "SCHEDULE_STOP" }).catch(() => {});
+    chrome.runtime.sendMessage({ type: "SCHEDULE_STOP" }).catch(() => { });
   }
 
   function scheduleNext(intervalMs) {
@@ -1111,7 +1114,7 @@
     sched.nextFireAt = Date.now() + intervalMs;
     chrome.runtime
       .sendMessage({ type: "SCHEDULE_START", intervalMin })
-      .catch(() => {});
+      .catch(() => { });
   }
 
   function startScheduler() {
@@ -1250,7 +1253,7 @@
     const nextStr =
       sInfo.active && sInfo.nextFireAt
         ? new Date(sInfo.nextFireAt).toLocaleTimeString() +
-          `（剩 ${Math.max(0, Math.round(sInfo.msUntilNext / 60000))} 分钟）`
+        `（剩 ${Math.max(0, Math.round(sInfo.msUntilNext / 60000))} 分钟）`
         : "未定时";
     const escapeHtml = (s) =>
       String(s).replace(/[<>&"']/g, (c) =>
