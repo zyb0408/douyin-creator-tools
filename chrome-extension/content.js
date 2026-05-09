@@ -424,13 +424,15 @@
   }
 
   async function applyUnrepliedFilter() {
-    // 1. 找"全部评论 ▾"下拉触发器
+    // 1. 找筛选下拉触发器（可能当前显示"全部评论"或"未回复"）
     const trigger = await waitFor(
       () => {
         const cands = document.querySelectorAll(SELECTORS.filterTriggerSelector);
         for (const e of cands) {
+          const t = (e.textContent || "").trim();
           if (
-            (e.textContent || "").trim() === SELECTORS.filterTriggerText &&
+            (t === SELECTORS.filterTriggerText ||
+              t === SELECTORS.unrepliedOptionText) &&
             isVisible(e)
           )
             return e;
@@ -1224,9 +1226,17 @@
     return { host, shadow, root };
   }
 
-  let uiState = { collapsed: true, root: null, shadow: null };
+  let uiState = { collapsed: true, root: null, shadow: null, _countdownTimer: null };
+
+  function stopCountdown() {
+    if (uiState._countdownTimer) {
+      clearInterval(uiState._countdownTimer);
+      uiState._countdownTimer = null;
+    }
+  }
 
   function renderFab() {
+    stopCountdown();
     uiState.root.innerHTML = `<div class="fab" title="抖音自动回复">🤖</div>`;
     uiState.root.querySelector(".fab").addEventListener("click", () => {
       uiState.collapsed = false;
@@ -1284,7 +1294,7 @@
               <div class="row"><label>开启</label><input type="checkbox" id="schedEnabled" ${cfg.schedule.enabled ? "checked" : ""}></div>
               <div class="row"><label>间隔(分钟)</label><input type="number" id="schedInterval" min="5" value="${cfg.schedule.intervalMin}"></div>
               <div class="row"><label>立即先跑</label><input type="checkbox" id="schedImmediate" ${cfg.schedule.runImmediatelyOnStart ? "checked" : ""}></div>
-              <div class="row"><label>下次运行</label><span style="font-size:12px;color:#57606a">${nextStr}</span></div>
+              <div class="row"><label>下次运行</label><span id="countdown-text" style="font-size:12px;color:#57606a">${nextStr}</span></div>
             </div>
           </details>
 
@@ -1330,6 +1340,32 @@
       </div>
     `;
     bindPanelEvents();
+
+    // 启动 1 秒倒计时，实时更新面板"下次运行"显示
+    stopCountdown();
+    uiState._countdownTimer = setInterval(() => {
+      const sInfo = getSchedulerInfo();
+      const el = uiState.root?.querySelector("#countdown-text");
+      if (!el) {
+        stopCountdown();
+        return;
+      }
+      if (sInfo.active && sInfo.nextFireAt) {
+        const ms = sInfo.msUntilNext;
+        if (ms <= 0) {
+          el.textContent = "即将触发...";
+        } else {
+          const totalSec = Math.max(0, Math.round(ms / 1000));
+          const min = Math.floor(totalSec / 60);
+          const sec = totalSec % 60;
+          el.textContent =
+            new Date(sInfo.nextFireAt).toLocaleTimeString() +
+            `（剩 ${min} 分 ${sec} 秒）`;
+        }
+      } else {
+        el.textContent = "未定时";
+      }
+    }, 1000);
   }
 
   function bindPanelEvents() {
