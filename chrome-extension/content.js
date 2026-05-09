@@ -19,6 +19,7 @@
     enabled: false,
     mode: "hybrid", // "template" | "llm" | "hybrid"
     worksLimit: 200, // 单次扫描安全上限（防异常死循环），用户不可见
+    maxRepliesPerScan: 10, // 用户可配置：每次扫描最多回复条数
     templates: ["感谢关注！❤️", "谢谢你的支持！", "欢迎常来玩～"],
     llm: {
       baseURL: "https://api.openai.com/v1",
@@ -490,6 +491,7 @@
     // 抽用户名/评论文本
     // 抖音格式: "Sting昨天18:53缓存命中97%左右 1回复删除举报"
     //          [用户名][时间][评论文本][操作行]
+    // 创作者自己的评论会含 "作者" 徽章，textContent 拼接会产生 "用户名作者..."
     const allText = (container.textContent || "")
       .trim()
       .replace(/\s+/g, " ");
@@ -502,13 +504,30 @@
       username = allText.slice(0, m.index).trim() || "unknown";
       body = allText.slice(m.index + m[0].length).trim();
     }
+    // 检测"作者"徽章（抖音给创作者评论加的标记）
+    let isOwn = false;
+    for (const e of container.querySelectorAll("*")) {
+      if (
+        directText(e) === "作者" &&
+        e.children.length === 0 &&
+        isVisible(e)
+      ) {
+        isOwn = true;
+        break;
+      }
+    }
+    // 清掉用户名里的 "作者" 后缀/前缀（textContent 拼接产生的）
+    if (username.endsWith("作者")) username = username.slice(0, -2).trim();
+    if (username.startsWith("作者"))
+      username = username.slice(2).trim() || "unknown";
+
     // 去尾部操作按钮文本: "1回复删除举报" 或 "0回复删除举报查看N条回复"
     const commentText =
       body
         .replace(/\s*\d*\s*回复\s*删除\s*举报.*$/, "")
         .trim() || body.slice(0, 100);
 
-    return { container, replyBtn, username, commentText };
+    return { container, replyBtn, username, commentText, isOwn };
   }
 
   ar.collect = { applyUnrepliedFilter, extractFirstUnreplied };
@@ -863,7 +882,9 @@
 
     let totalReplied = 0;
     let consecutiveFailures = 0;
-    const maxReplies = Math.max(1, cfg.worksLimit | 0); // 安全上限，用户不可见
+    const safetyMax = Math.max(1, cfg.worksLimit | 0); // 隐性安全上限，防死循环
+    const userMax = Math.max(1, cfg.maxRepliesPerScan | 0); // 用户配置：本次扫描最多回复
+    const maxReplies = Math.min(userMax, safetyMax);
     const workTitle = "（当前作品）";
     // 本次扫描内已处理过的评论签名集合（防同一条被反复抓回）
     const processedSignatures = new Set();
@@ -871,7 +892,7 @@
       (c.username || "").trim() + "|" + (c.commentText || "").trim().slice(0, 40);
 
     try {
-      appendLog(`开始扫描当前作品的所有未回复评论`);
+      appendLog(`本次扫描最多回复 ${maxReplies} 条`);
 
       try {
         await applyUnrepliedFilter();
@@ -886,6 +907,13 @@
         if (!c) {
           appendLog(`已无可回复评论`);
           break;
+        }
+        // 跳过自己的评论（"作者"徽章）— 不占 commentSeq
+        if (c.isOwn) {
+          if (c.replyBtn && c.replyBtn.dataset)
+            c.replyBtn.dataset.douyinArReplied = "1";
+          appendLog(`跳过自己的评论：${c.username}`);
+          continue;
         }
         const sig = sigOf(c);
         // 签名已处理过 → 标记节点防再抓 + 跳过；连续 3 次都是已处理就停
@@ -1166,6 +1194,7 @@
                   <option value="hybrid" ${cfg.mode === "hybrid" ? "selected" : ""}>混合</option>
                 </select>
               </div>
+              <div class="row"><label>每次最多回复</label><input type="number" id="maxRepliesPerScan" min="1" max="200" value="${cfg.maxRepliesPerScan}">条</div>
             </div>
           </details>
 
@@ -1249,6 +1278,10 @@
     const cfg = loadConfig();
     cfg.enabled = $("#enabled").checked;
     cfg.mode = $("#mode").value;
+    cfg.maxRepliesPerScan = Math.max(
+      1,
+      Math.min(200, parseInt($("#maxRepliesPerScan").value, 10) || 10),
+    );
     // worksLimit 是隐性安全上限，UI 不展示。如旧版小于 50 自动复位避免限死
     if (!cfg.worksLimit || cfg.worksLimit < 50) cfg.worksLimit = 200;
     cfg.schedule.enabled = $("#schedEnabled").checked;
