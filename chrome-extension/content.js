@@ -20,6 +20,7 @@
     mode: "hybrid", // "template" | "llm" | "hybrid"
     worksLimit: 200, // 单次扫描安全上限（防异常死循环），用户不可见
     maxRepliesPerScan: 10, // 用户可配置：每次扫描最多回复条数
+    worksToProcess: 0, // 遍历最新 N 个作品（0 = 仅当前作品不切换）
     templates: ["感谢关注！❤️", "谢谢你的支持！", "欢迎常来玩～"],
     llm: {
       baseURL: "https://api.openai.com/v1",
@@ -341,55 +342,73 @@
 
   // ============================================================
   // works — 打开作品面板，选第 i 个作品
+  // 抖音 DOM: ul.douyin-creator-interactive-list-items > div.container-XXXX
   // ============================================================
+  const WORKS_LIST_UL = "ul.douyin-creator-interactive-list-items";
+
   async function openWorksPanel() {
+    // 如果侧边栏已经打开，直接返回（避免反复点击）
+    const existing = document.querySelector(WORKS_LIST_UL);
+    if (existing && isVisible(existing)) return;
+
     const btn = await waitFor(
       () => queryClickableByText(SELECTORS.worksOpenBtnText),
       { timeout: 8000 },
     );
     realClick(btn);
-    // 等侧边栏出现：用「兜底封面图」作为存在标志
+    // 等侧边栏作品列表 UL 出现
     await waitFor(
-      () =>
-        document.querySelectorAll(SELECTORS.worksItemFallbackImg).length >= 1,
+      () => {
+        const ul = document.querySelector(WORKS_LIST_UL);
+        return ul && isVisible(ul);
+      },
       { timeout: 6000 },
     );
-    await sleep(400);
+    await sleep(500); // 等列表渲染稳定
   }
 
   function listWorkItems() {
-    // 优先 data-e2e 等语义属性；兜底：所有带封面图的可点击块
-    const named = document.querySelectorAll(
-      '[data-e2e*="work"], [data-e2e*="aweme-item"]',
+    const ul = document.querySelector(WORKS_LIST_UL);
+    if (!ul) return [];
+    // UL 直接子元素就是 div.container-XXXX，每个是一个作品项
+    return [...ul.children].filter(isVisible);
+  }
+
+  function getWorkTitle(item) {
+    // container 的 textContent 含标题、统计、时间等，截前 60 字作为日志标题
+    return (
+      (item?.textContent || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 60) || "未知作品"
     );
-    if (named.length > 0) return Array.from(named).filter(isVisible);
-    // 兜底：每个封面图所在的可点击容器
-    const imgs = Array.from(
-      document.querySelectorAll(SELECTORS.worksItemFallbackImg),
-    ).filter(isVisible);
-    const seen = new Set();
-    const items = [];
-    for (const img of imgs) {
-      const card =
-        img.closest('[role="button"]') || img.closest("li") || img.closest("div");
-      if (card && !seen.has(card)) {
-        seen.add(card);
-        items.push(card);
-      }
-    }
-    return items;
   }
 
   async function selectWorkByIndex(idx) {
     await openWorksPanel();
     const items = listWorkItems();
-    if (idx >= items.length)
-      throw new Error(`作品索引越界：要 #${idx} 但只有 ${items.length} 个`);
-    realClick(items[idx]);
-    await sleep(800); // 等评论区切换
+    if (idx >= items.length) {
+      throw new Error(
+        `作品索引 ${idx + 1} 超出范围（共 ${items.length} 个）`,
+      );
+    }
+    const item = items[idx];
+    // 滚到该作品（侧边栏 UL 可能有滚动条）
+    item.scrollIntoView({ block: "center", behavior: "instant" });
+    await sleep(300);
+    realClick(item);
+    // 等评论区刷新（侧边栏关闭 + 评论加载）
+    await sleep(1500);
+    return getWorkTitle(item);
   }
 
-  ar.works = { openWorksPanel, listWorkItems, selectWorkByIndex, SELECTORS };
+  ar.works = {
+    openWorksPanel,
+    listWorkItems,
+    selectWorkByIndex,
+    getWorkTitle,
+    SELECTORS,
+  };
 
   // ============================================================
   // collect — 应用「未回复」筛选，提取下一条待回复
@@ -881,48 +900,47 @@
     }
 
     let totalReplied = 0;
-    let consecutiveFailures = 0;
     const safetyMax = Math.max(1, cfg.worksLimit | 0); // 隐性安全上限，防死循环
     const userMax = Math.max(1, cfg.maxRepliesPerScan | 0); // 用户配置：本次扫描最多回复
     const maxReplies = Math.min(userMax, safetyMax);
-    const workTitle = "（当前作品）";
-    // 本次扫描内已处理过的评论签名集合（防同一条被反复抓回）
-    const processedSignatures = new Set();
-    const sigOf = (c) =>
-      (c.username || "").trim() + "|" + (c.commentText || "").trim().slice(0, 40);
+    const worksToProcess = Math.max(0, cfg.worksToProcess | 0);
 
-    try {
-      appendLog(`本次扫描最多回复 ${maxReplies} 条`);
+    // 处理一个已选中作品的所有未回复（不切换作品，直接在当前评论列表上跑）
+    // 返回本作品成功回复的条数
+    const processCurrentWork = async (workTitle) => {
+      let replied = 0;
+      let consecutiveFailures = 0;
+      const processedSignatures = new Set();
+      const sigOf = (c) =>
+        (c.username || "").trim() + "|" + (c.commentText || "").trim().slice(0, 40);
 
       try {
         await applyUnrepliedFilter();
       } catch (e) {
-        appendLog(`未回复筛选失败：${e.message}`);
-        return { totalReplied: 0 };
+        appendLog(`  未回复筛选失败：${e.message}`);
+        return 0;
       }
 
       let commentSeq = 0;
       while (!STATE.abortRequested && commentSeq < maxReplies) {
         const c = extractFirstUnreplied();
         if (!c) {
-          appendLog(`已无可回复评论`);
+          appendLog(`  已无可回复评论`);
           break;
         }
-        // 跳过自己的评论（"作者"徽章）— 不占 commentSeq
         if (c.isOwn) {
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
-          appendLog(`跳过自己的评论：${c.username}`);
+          appendLog(`  跳过自己的评论：${c.username}`);
           continue;
         }
         const sig = sigOf(c);
-        // 签名已处理过 → 标记节点防再抓 + 跳过；连续 3 次都是已处理就停
         if (processedSignatures.has(sig)) {
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
           if (consecutiveFailures >= 3) {
-            appendLog(`重复抓到已处理评论，可能页面未刷新，停止扫描`);
+            appendLog(`  重复抓到已处理评论，可能页面未刷新，停止`);
             break;
           }
           continue;
@@ -932,21 +950,20 @@
         const gen = await generateReply({ cfg, workTitle, comment: c });
         if (gen.fatal) {
           appendLog(
-            `评论 #${commentSeq} LLM ${gen.status} 致命错误，停止本轮`,
+            `  评论 #${commentSeq} LLM ${gen.status} 致命错误，停止`,
           );
           break;
         }
         if (!gen.text) {
           appendLog(
-            `评论 #${commentSeq} user=${c.username} → 跳过(${gen.reason})`,
+            `  评论 #${commentSeq} user=${c.username} → 跳过(${gen.reason})`,
           );
-          // 标记已处理避免再抓
           processedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
           if (consecutiveFailures >= 3) {
-            appendLog(`连续 3 次失败，暂停本轮`);
+            appendLog(`  连续 3 次失败，暂停本作品`);
             break;
           }
           continue;
@@ -955,7 +972,7 @@
         const sanitized = sanitizeReplyMessage(gen.text, cfg.aiSignature);
         if (!sanitized.replyMessage) {
           appendLog(
-            `评论 #${commentSeq} user=${c.username} → 命中过滤(${sanitized.skipReason})，跳过`,
+            `  评论 #${commentSeq} user=${c.username} → 命中过滤(${sanitized.skipReason})，跳过`,
           );
           processedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
@@ -965,30 +982,72 @@
 
         try {
           appendLog(
-            `评论 #${commentSeq} user=${c.username} → 发送中... (${gen.via})`,
+            `  评论 #${commentSeq} user=${c.username} → 发送中... (${gen.via})`,
           );
           await sendReply(c, sanitized.replyMessage, cfg);
-          // 立刻标记，防止下一轮 extract 抓到同一条
           processedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
-          totalReplied += 1;
+          replied += 1;
           consecutiveFailures = 0;
-          appendLog(`评论 #${commentSeq} 已回复 ✓`);
+          appendLog(`  评论 #${commentSeq} 已回复 ✓`);
           await sleep(
             randomBetween(cfg.replyDelayMinMs, cfg.replyDelayMaxMs),
           );
         } catch (e) {
-          appendLog(`评论 #${commentSeq} 发送失败：${e.message}`);
-          // 失败也标记，不再尝试该按钮（避免重复发送给同一条）
+          appendLog(`  评论 #${commentSeq} 发送失败：${e.message}`);
           processedSignatures.add(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           consecutiveFailures += 1;
           if (consecutiveFailures >= 3) {
-            appendLog(`连续 3 次失败，暂停本轮`);
+            appendLog(`  连续 3 次失败，暂停本作品`);
             break;
           }
+        }
+      }
+      return replied;
+    };
+
+    try {
+      if (worksToProcess === 0) {
+        // 仅当前作品（不切换）
+        appendLog(`本次扫描最多回复 ${maxReplies} 条 / 仅当前作品`);
+        totalReplied = await processCurrentWork("（当前作品）");
+      } else {
+        // 切换前 N 个作品
+        appendLog(`本次扫描每作品最多回复 ${maxReplies} 条 / 遍历前 ${worksToProcess} 个作品`);
+        try {
+          await openWorksPanel();
+        } catch (e) {
+          appendLog(`打开作品面板失败：${e.message}`);
+          return { totalReplied: 0 };
+        }
+        const items = listWorkItems();
+        if (items.length === 0) {
+          appendLog(`未找到任何作品，停止`);
+          return { totalReplied: 0 };
+        }
+        const N = Math.min(worksToProcess, items.length);
+        appendLog(`发现 ${items.length} 个作品，处理前 ${N} 个`);
+
+        for (let i = 0; i < N; i++) {
+          if (STATE.abortRequested) {
+            appendLog(`已暂停`);
+            break;
+          }
+          STATE.currentWorkIdx = i;
+          let title;
+          try {
+            title = await selectWorkByIndex(i);
+          } catch (e) {
+            appendLog(`作品 #${i + 1} 切换失败：${e.message}`);
+            continue;
+          }
+          appendLog(`========= 作品 ${i + 1}/${N}: ${title} =========`);
+          const replied = await processCurrentWork(title);
+          totalReplied += replied;
+          appendLog(`作品 ${i + 1}/${N} 完成，本作品回复 ${replied} 条`);
         }
       }
     } catch (e) {
@@ -1195,6 +1254,7 @@
                 </select>
               </div>
               <div class="row"><label>每次最多回复</label><input type="number" id="maxRepliesPerScan" min="1" max="200" value="${cfg.maxRepliesPerScan}">条</div>
+              <div class="row"><label>遍历作品数</label><input type="number" id="worksToProcess" min="0" max="50" value="${cfg.worksToProcess}"><span style="font-size:11px;color:#57606a">（0=仅当前作品）</span></div>
               <div class="row"><label>回复尾巴</label><input type="text" id="aiSig" placeholder="留空则不追加" value="${escapeHtml(cfg.aiSignature)}"></div>
             </div>
           </details>
@@ -1281,6 +1341,10 @@
     cfg.maxRepliesPerScan = Math.max(
       1,
       Math.min(200, parseInt($("#maxRepliesPerScan").value, 10) || 10),
+    );
+    cfg.worksToProcess = Math.max(
+      0,
+      Math.min(50, parseInt($("#worksToProcess").value, 10) || 0),
     );
     // worksLimit 是隐性安全上限，UI 不展示。如旧版小于 50 自动复位避免限死
     if (!cfg.worksLimit || cfg.worksLimit < 50) cfg.worksLimit = 200;
