@@ -1119,8 +1119,8 @@
   function startScheduler() {
     const cfg = loadConfig();
     if (!cfg.schedule.enabled) return;
-    if (cfg.schedule.intervalMin < 5) {
-      appendLog(`定时间隔小于 5 分钟，已忽略`);
+    if (cfg.schedule.intervalMin < 1) {
+      appendLog(`定时间隔小于 1 分钟，已忽略`);
       return;
     }
     appendLog(`定时已开启，间隔 ${cfg.schedule.intervalMin} 分钟（后台精确计时）`);
@@ -1292,7 +1292,7 @@
             <summary>定时扫描</summary>
             <div class="content">
               <div class="row"><label>开启</label><input type="checkbox" id="schedEnabled" ${cfg.schedule.enabled ? "checked" : ""}></div>
-              <div class="row"><label>间隔(分钟)</label><input type="number" id="schedInterval" min="5" value="${cfg.schedule.intervalMin}"></div>
+              <div class="row"><label>间隔(分钟)</label><input type="number" id="schedInterval" min="1" value="${cfg.schedule.intervalMin}"></div>
               <div class="row"><label>立即先跑</label><input type="checkbox" id="schedImmediate" ${cfg.schedule.runImmediatelyOnStart ? "checked" : ""}></div>
               <div class="row"><label>下次运行</label><span id="countdown-text" style="font-size:12px;color:#57606a">${nextStr}</span></div>
             </div>
@@ -1407,7 +1407,7 @@
     cfg.schedule.enabled = $("#schedEnabled").checked;
     const interval = parseInt($("#schedInterval").value, 10) || 30;
     if (interval < 5) {
-      alert("定时间隔不能小于 5 分钟");
+      alert("定时间隔不能小于 1 分钟");
       return;
     }
     cfg.schedule.intervalMin = interval;
