@@ -597,12 +597,66 @@
     container.scrollIntoView({ block: "center", behavior: "instant" });
     await sleep(200);
 
+    // 点击「回复」前快照所有可见 contenteditable，便于识别"新出现的那个"
+    // 顶部主评论框始终在 DOM 里，必须排除它，否则会把回复发成新评论
+    const beforeEditors = new Set(
+      [...document.querySelectorAll(SELECTORS.editorContentEditable)].filter(
+        isVisible,
+      ),
+    );
+
     realClick(replyBtn);
 
-    const editor = await findEditor();
+    // 找新出现的输入框：优先 commentInfo.container 内的，兜底用快照差集
+    const editor = await waitFor(
+      () => {
+        const all = [
+          ...document.querySelectorAll(SELECTORS.editorContentEditable),
+        ].filter(isVisible);
+        // 优先：评论容器内出现的
+        const inContainer = all.find(
+          (e) => container.contains(e) && !beforeEditors.has(e),
+        );
+        if (inContainer) return inContainer;
+        // 兜底：本来不在的，新出现的
+        const newOne = all.find((e) => !beforeEditors.has(e));
+        if (newOne) return newOne;
+        return null;
+      },
+      { timeout: 5000 },
+    );
+
     await typeReply(editor, replyText, cfg);
 
-    const sendBtn = await findSendButton(editor);
+    // 找发送按钮：限定在 editor 邻近的容器里，避免点到顶部主输入框的"发送"
+    const sendBtn = await waitFor(
+      () => {
+        // editor 自身向上找最近的"回复表单"祖先
+        const scope =
+          editor.closest(
+            "[class*='editor'], [class*='Editor'], [class*='reply'], [class*='Reply'], form",
+          ) ||
+          editor.parentElement?.parentElement ||
+          editor.parentElement;
+        if (!scope) return null;
+        const all = [
+          ...scope.querySelectorAll("button, [role='button'], div, span"),
+        ];
+        for (const e of all) {
+          if (
+            directText(e) === SELECTORS.sendBtnText &&
+            isVisible(e) &&
+            !e.disabled &&
+            e.getAttribute("aria-disabled") !== "true" &&
+            !e.classList.contains("disabled")
+          ) {
+            return e.closest("button, [role='button']") || e;
+          }
+        }
+        return null;
+      },
+      { timeout: 4000 },
+    );
     realClick(sendBtn);
 
     // 等评论从未回复列表消失（或回复按钮消失）
