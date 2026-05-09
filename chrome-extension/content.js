@@ -1195,6 +1195,7 @@
                 </select>
               </div>
               <div class="row"><label>每次最多回复</label><input type="number" id="maxRepliesPerScan" min="1" max="200" value="${cfg.maxRepliesPerScan}">条</div>
+              <div class="row"><label>回复尾巴</label><input type="text" id="aiSig" placeholder="留空则不追加" value="${escapeHtml(cfg.aiSignature)}"></div>
             </div>
           </details>
 
@@ -1221,7 +1222,6 @@
               <div class="row"><label>model</label><input type="text" id="llmModel" value="${escapeHtml(cfg.llm.model)}"></div>
               <div class="row"><label>temperature</label><input type="number" step="0.1" id="llmTemp" value="${cfg.llm.temperature}"></div>
               <div class="row"><label>maxTokens</label><input type="number" id="llmMax" value="${cfg.llm.maxTokens}"></div>
-              <div class="row"><label>AI 签名</label><input type="text" id="aiSig" value="${escapeHtml(cfg.aiSignature)}"></div>
             </div>
           </details>
 
