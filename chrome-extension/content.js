@@ -463,7 +463,7 @@
       { timeout: 3000 },
     );
     realClick(option);
-    await sleep(800); // 等评论列表刷新
+    await sleep(1500); // 等评论列表刷新（API 请求 + React 渲染）
   }
 
   /**
