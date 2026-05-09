@@ -18,7 +18,7 @@
   const DEFAULT_CONFIG = {
     enabled: false,
     mode: "hybrid", // "template" | "llm" | "hybrid"
-    worksLimit: 8,
+    worksLimit: 200, // 单次扫描安全上限（防异常死循环），用户不可见
     templates: ["感谢关注！❤️", "谢谢你的支持！", "欢迎常来玩～"],
     llm: {
       baseURL: "https://api.openai.com/v1",
@@ -659,9 +659,19 @@
     );
     realClick(sendBtn);
 
-    // 等评论从未回复列表消失（或回复按钮消失）
+    // 发送后等：任意一个达到即视为完成
+    // A. 行内输入框 editor 从 DOM 移除或不可见（最常见的成功标志）
+    // B. editor 文本被清空（前端发送后清框）
+    // C. replyBtn 自身消失（评论被未回复筛掉）
     await waitFor(
-      () => !document.body.contains(replyBtn) || !isVisible(replyBtn),
+      () => {
+        const editorGone =
+          !document.body.contains(editor) || !isVisible(editor);
+        const editorEmpty = (editor.textContent || "").trim() === "";
+        const btnGone =
+          !document.body.contains(replyBtn) || !isVisible(replyBtn);
+        return editorGone || editorEmpty || btnGone;
+      },
       { timeout: 8000 },
     );
     return true;
@@ -831,7 +841,7 @@
     STATE.abortRequested = false;
     STATE.lastError = null;
     appendLog(
-      `${trigger === "schedule" ? "[定时] " : ""}第 ${STATE.runId} 轮启动`,
+      `${trigger === "schedule" ? "[定时] " : ""}扫描 #${STATE.runId} 启动`,
     );
 
     const cfg = loadConfig();
@@ -851,11 +861,11 @@
 
     let totalReplied = 0;
     let consecutiveFailures = 0;
-    const maxReplies = Math.max(1, cfg.worksLimit | 0);
+    const maxReplies = Math.max(1, cfg.worksLimit | 0); // 安全上限，用户不可见
     const workTitle = "（当前作品）";
 
     try {
-      appendLog(`本轮最多回复 ${maxReplies} 条`);
+      appendLog(`开始扫描当前作品的所有未回复评论`);
 
       try {
         await applyUnrepliedFilter();
@@ -926,7 +936,7 @@
     } finally {
       STATE.state = "idle";
       STATE.currentWorkIdx = -1;
-      appendLog(`第 ${STATE.runId} 轮结束，共回复 ${totalReplied} 条`);
+      appendLog(`扫描 #${STATE.runId} 结束，共回复 ${totalReplied} 条`);
     }
     return { totalReplied };
   }
@@ -1123,7 +1133,6 @@
                   <option value="hybrid" ${cfg.mode === "hybrid" ? "selected" : ""}>混合</option>
                 </select>
               </div>
-              <div class="row"><label>最多回复条数</label><input type="number" id="worksLimit" min="1" max="200" value="${cfg.worksLimit}"></div>
             </div>
           </details>
 
@@ -1207,7 +1216,8 @@
     const cfg = loadConfig();
     cfg.enabled = $("#enabled").checked;
     cfg.mode = $("#mode").value;
-    cfg.worksLimit = Math.max(1, parseInt($("#worksLimit").value, 10) || 1);
+    // worksLimit 是隐性安全上限，UI 不展示。如旧版小于 50 自动复位避免限死
+    if (!cfg.worksLimit || cfg.worksLimit < 50) cfg.worksLimit = 200;
     cfg.schedule.enabled = $("#schedEnabled").checked;
     const interval = parseInt($("#schedInterval").value, 10) || 30;
     if (interval < 5) {
