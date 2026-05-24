@@ -747,7 +747,7 @@
   // ============================================================
   function buildUserPrompt({ workTitle, comment }) {
     return [
-      `作品标题：${normalizeText(workTitle) || "未知作品"}`,
+      //`作品标题：${normalizeText(workTitle) || "未知作品"}`,
       `用户昵称：${normalizeText(comment.username || "")}`,
       `评论内容：${normalizeText(comment.commentText || "")}`,
       `评论是否带图：否`,
@@ -1406,7 +1406,7 @@
     if (!cfg.worksLimit || cfg.worksLimit < 50) cfg.worksLimit = 200;
     cfg.schedule.enabled = $("#schedEnabled").checked;
     const interval = parseInt($("#schedInterval").value, 10) || 30;
-    if (interval < 5) {
+    if (interval < 1) {
       alert("定时间隔不能小于 1 分钟");
       return;
     }
