@@ -651,6 +651,16 @@
     }
   }
 
+  function hasVisibleText(root, text) {
+    const needle = normalizeText(text);
+    if (!root || !needle) return false;
+    for (const el of root.querySelectorAll("*")) {
+      if (!isVisible(el)) continue;
+      if (normalizeText(el.textContent || "").includes(needle)) return true;
+    }
+    return false;
+  }
+
   /**
    * 完整的单条回复时序：滚动 → 点回复 → 等输入框 → 输入 → 等发送 enabled → 点发送 → 等消失
    * 成功返回 true，失败抛错。
@@ -722,20 +732,20 @@
     );
     realClick(sendBtn);
 
-    // 发送后等：任意一个达到即视为完成
-    // A. 行内输入框 editor 从 DOM 移除或不可见（最常见的成功标志）
-    // B. editor 文本被清空（前端发送后清框）
-    // C. replyBtn 自身消失（评论被未回复筛掉）
+    // 发送后必须等到页面出现明确的成功信号；输入框清空本身不够可靠。
     await waitFor(
       () => {
-        const editorGone =
-          !document.body.contains(editor) || !isVisible(editor);
-        const editorEmpty = (editor.textContent || "").trim() === "";
         const btnGone =
           !document.body.contains(replyBtn) || !isVisible(replyBtn);
-        return editorGone || editorEmpty || btnGone;
+        const editorStillHasDraft =
+          document.body.contains(editor) &&
+          isVisible(editor) &&
+          normalizeText(editor.textContent || "").includes(normalizeText(replyText));
+        const replyVisible =
+          !editorStillHasDraft && hasVisibleText(container, replyText);
+        return btnGone || replyVisible;
       },
-      { timeout: 8000 },
+      { timeout: 12000 },
     );
     return true;
   }
@@ -863,10 +873,59 @@
   // ============================================================
   // engine — 主循环 + 暂停状态机
   // ============================================================
-  // 页面会话级别已回复签名集合：跨 scan 持久，防止定时扫描重复回复
+  // 页面会话级别 + storage 短期持久化，防止定时扫描/页面重载后重复回复。
+  const REPLIED_CACHE_KEY = "douyinAR.sentSignatures.v2";
+  const REPLIED_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const REPLIED_CACHE_MAX = 1000;
   const repliedSignatures = new Set();
-  const sigOf = (c) =>
-    (c.username || "").trim() + "|" + (c.commentText || "").trim().slice(0, 40);
+  const sigOf = (c, workTitle = "") =>
+    normalizeText(workTitle).slice(0, 60) +
+    "|" +
+    (c.username || "").trim() +
+    "|" +
+    (c.commentText || "").trim().slice(0, 40);
+
+  async function loadRepliedSignatures() {
+    try {
+      const result = await chrome.storage.local.get([REPLIED_CACHE_KEY]);
+      const raw = result[REPLIED_CACHE_KEY];
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const now = Date.now();
+      const entries = Object.entries(parsed || {})
+        .filter(([, ts]) => typeof ts === "number" && now - ts < REPLIED_CACHE_TTL_MS)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, REPLIED_CACHE_MAX);
+      repliedSignatures.clear();
+      for (const [sig] of entries) repliedSignatures.add(sig);
+      if (entries.length !== Object.keys(parsed || {}).length) {
+        await chrome.storage.local.set({
+          [REPLIED_CACHE_KEY]: Object.fromEntries(entries),
+        });
+      }
+    } catch (e) {
+      console.warn(TAG, "loadRepliedSignatures failed:", e);
+    }
+  }
+
+  async function rememberRepliedSignature(sig) {
+    if (!sig) return;
+    repliedSignatures.add(sig);
+    try {
+      const result = await chrome.storage.local.get([REPLIED_CACHE_KEY]);
+      const raw = result[REPLIED_CACHE_KEY];
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const now = Date.now();
+      const cache = { ...(parsed || {}), [sig]: now };
+      const entries = Object.entries(cache)
+        .filter(([, ts]) => typeof ts === "number" && now - ts < REPLIED_CACHE_TTL_MS);
+      entries.sort((a, b) => b[1] - a[1]);
+      await chrome.storage.local.set({
+        [REPLIED_CACHE_KEY]: Object.fromEntries(entries.slice(0, REPLIED_CACHE_MAX)),
+      });
+    } catch (e) {
+      console.warn(TAG, "rememberRepliedSignature failed:", e);
+    }
+  }
 
   const STATE = {
     state: "idle",
@@ -880,6 +939,8 @@
   function getState() {
     return { ...STATE };
   }
+
+  await loadRepliedSignatures();
 
   function requestPause() {
     if (STATE.state === "running") {
@@ -950,10 +1011,11 @@
           appendLog(`  跳过自己的评论：${c.username}`);
           continue;
         }
-        const sig = sigOf(c);
+        const sig = sigOf(c, workTitle);
         if (repliedSignatures.has(sig)) {
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
+          appendLog(`  跳过已处理评论：${c.username}`);
           consecutiveFailures += 1;
           if (consecutiveFailures >= 3) {
             appendLog(`  重复抓到已处理评论，可能页面未刷新，停止`);
@@ -1018,7 +1080,7 @@
         try {
           appendLog(`  评论 #${commentSeq} 发送中...`);
           await sendReply(c, sanitized.replyMessage, cfg);
-          repliedSignatures.add(sig);
+          await rememberRepliedSignature(sig);
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           replied += 1;
