@@ -49,6 +49,12 @@
       intervalMin: 30,
       runImmediatelyOnStart: false,
     },
+    batchReply: {
+      loopCount: 3,
+      replyText: "",
+      selectCount: 20,
+      intervalSec: 30,
+    },
   };
 
   const CONFIG_KEY = "douyinAR.config";
@@ -1005,13 +1011,16 @@
           appendLog(`  已无可回复评论`);
           break;
         }
+        const sig = sigOf(c, workTitle);
         if (c.isOwn) {
+          // Bug 修复：保存签名到存储，防止页面重载后重复处理自己的评论
+          repliedSignatures.add(sig);
+          await rememberRepliedSignature(sig).catch(() => {});
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
           appendLog(`  跳过自己的评论：${c.username}`);
           continue;
         }
-        const sig = sigOf(c, workTitle);
         if (repliedSignatures.has(sig)) {
           if (c.replyBtn && c.replyBtn.dataset)
             c.replyBtn.dataset.douyinArReplied = "1";
@@ -1037,9 +1046,15 @@
         const gen = await generateReply({ cfg, workTitle, comment: c });
         const tMs = Date.now() - tStart;
         if (gen.fatal) {
+          // Bug 修复：保存签名防止下次扫描重复处理
+          repliedSignatures.add(sig);
+          await rememberRepliedSignature(sig).catch(() => {});
           appendLog(
             `  评论 #${commentSeq} LLM ${gen.status} 致命错误，停止`,
           );
+          // 标记 DOM 以跳过当前会话中的后续扫描
+          if (c.replyBtn && c.replyBtn.dataset)
+            c.replyBtn.dataset.douyinArReplied = "1";
           break;
         }
         if (!gen.text) {
@@ -1157,6 +1172,346 @@
   }
 
   ar.engine = { runOnce, requestPause, getState };
+
+  // ============================================================
+  // batchReply — 批量回复引擎（利用页面原生"批量管理"功能）
+  // ============================================================
+  async function batchReplyOnce(replyText, selectCount) {
+    // 1. 点击"批量管理"进入批量管理模式
+    const batchMgrBtn = await waitFor(
+      () => queryClickableByText("批量管理"),
+      { timeout: 5000 },
+    );
+    realClick(batchMgrBtn);
+    await sleep(1000);
+
+    // 2. 勾选评论复选框（头像前面的 checkbox）
+    //    抖音的复选框是自定义组件，不是标准 input[type=checkbox]
+    //    策略：找到每条评论容器，定位其中/其前面的勾选区域
+    const checkboxes = await waitFor(
+      () => {
+        // 方法1：标准 checkbox 或 role=checkbox
+        const standard = [
+          ...document.querySelectorAll('input[type="checkbox"], [role="checkbox"]'),
+        ].filter(isVisible);
+        if (standard.length > 0) return standard;
+
+        // 方法2：批量管理模式下，评论容器左侧会出现小方框
+        // 通过评论列表中每条评论的容器来定位
+        const commentContainers = document.querySelectorAll(SELECTORS.commentActionItemSelector);
+        const cbCandidates = [];
+        const seen = new Set();
+        for (const actionItem of commentContainers) {
+          if (directText(actionItem) !== SELECTORS.replyBtnText) continue;
+          // 找到评论容器
+          let container = actionItem.closest("[class*='container-']");
+          if (!container) container = actionItem.closest("[class*='content-']");
+          if (!container || seen.has(container)) continue;
+          seen.add(container);
+
+          // 在容器内或其前面找小方框（通常尺寸 14-24px，在头像左侧）
+          // 先检查容器前面的兄弟元素
+          let prev = container.previousElementSibling;
+          if (prev && isVisible(prev)) {
+            const r = prev.getBoundingClientRect();
+            if (r.width >= 10 && r.width <= 40 && r.height >= 10 && r.height <= 40) {
+              cbCandidates.push(prev);
+              continue;
+            }
+          }
+
+          // 在容器内部找：第一个小尺寸的可点击元素（在头像之前）
+          const children = container.querySelectorAll("*");
+          for (const child of children) {
+            if (!isVisible(child)) continue;
+            const r = child.getBoundingClientRect();
+            if (r.width >= 10 && r.width <= 40 && r.height >= 10 && r.height <= 40) {
+              const containerRect = container.getBoundingClientRect();
+              // 在容器左侧区域（前 60px）
+              if (r.left < containerRect.left + 60) {
+                cbCandidates.push(child);
+                break;
+              }
+            }
+          }
+        }
+        if (cbCandidates.length > 0) return cbCandidates;
+
+        // 方法3：兜底 - 找所有小方框元素（class hash 化但尺寸特征稳定）
+        const allSmallBoxes = [];
+        for (const el of document.querySelectorAll("div, span, label")) {
+          if (!isVisible(el)) continue;
+          if (el.children.length > 2) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width >= 12 && r.width <= 28 && r.height >= 12 && r.height <= 28) {
+            const cs = window.getComputedStyle(el);
+            if (cs.borderWidth && cs.borderWidth !== "0px" && cs.cursor === "pointer") {
+              allSmallBoxes.push(el);
+            }
+          }
+        }
+        return allSmallBoxes.length > 0 ? allSmallBoxes : null;
+      },
+      { timeout: 5000 },
+    );
+
+    const toSelect = Math.min(selectCount, checkboxes.length);
+    if (toSelect === 0) {
+      appendLog("  未找到可勾选的评论，退出批量管理");
+      const exitBtn = queryClickableByText("退出批量管理");
+      if (exitBtn) realClick(exitBtn);
+      return { selected: 0 };
+    }
+
+    appendLog(`  找到 ${checkboxes.length} 个复选框，准备勾选 ${toSelect} 个`);
+    for (let i = 0; i < toSelect; i++) {
+      const cb = checkboxes[i];
+      realClick(cb);
+      await sleep(300);
+    }
+    appendLog(`  已勾选 ${toSelect} 条评论`);
+    await sleep(500);
+
+    // 3. 点击工具栏中的"回复"按钮
+    //    策略：先通过"退出批量管理"定位工具栏容器，再在其中找"回复"
+    const replyBtn = await waitFor(
+      () => {
+        // 找到"退出批量管理"元素，以此定位批量工具栏
+        let toolbar = null;
+        const allEls = document.querySelectorAll("*");
+        for (const el of allEls) {
+          if (directText(el).includes("退出批量管理") && isVisible(el)) {
+            // 向上找共同父容器（工具栏行）
+            toolbar = el.parentElement;
+            while (toolbar && toolbar.parentElement && toolbar.children.length < 3) {
+              toolbar = toolbar.parentElement;
+            }
+            break;
+          }
+        }
+        if (!toolbar) return null;
+
+        // 在工具栏容器中找包含"回复"文字的可点击元素
+        const items = toolbar.querySelectorAll("*");
+        for (const el of items) {
+          const dt = directText(el);
+          if (dt === "回复" && isVisible(el)) {
+            return el.closest("button, [role='button']") || el;
+          }
+        }
+        // 兜底：textContent 包含"回复"但排除"退出批量管理"和长文本
+        for (const el of items) {
+          const t = (el.textContent || "").trim();
+          if (
+            t.includes("回复") &&
+            !t.includes("退出") &&
+            t.length < 10 &&
+            isVisible(el) &&
+            el.children.length <= 2
+          ) {
+            return el.closest("button, [role='button']") || el;
+          }
+        }
+        return null;
+      },
+      { timeout: 5000 },
+    );
+    realClick(replyBtn);
+    appendLog("  已点击工具栏回复按钮");
+    await sleep(1500);
+
+    // 4. 等待"批量回复"弹窗出现并输入文字
+    //    策略：直接找包含"批量回复"标题文字的弹窗，再在弹窗中找输入框
+    const dialogEditor = await waitFor(
+      () => {
+        // 找到"批量回复"标题元素，向上找弹窗容器
+        let dialogRoot = null;
+        for (const el of document.querySelectorAll("*")) {
+          if (directText(el) === "批量回复" && isVisible(el)) {
+            // 向上找直到一个足够大的浮层容器
+            let p = el.parentElement;
+            while (p && p !== document.body) {
+              const rect = p.getBoundingClientRect();
+              if (rect.width > 300 && rect.height > 200) {
+                dialogRoot = p;
+                break;
+              }
+              p = p.parentElement;
+            }
+            if (dialogRoot) break;
+          }
+        }
+        if (!dialogRoot) return null;
+
+        const editor =
+          dialogRoot.querySelector('[contenteditable="true"]') ||
+          dialogRoot.querySelector("textarea");
+        return editor && isVisible(editor) ? editor : null;
+      },
+      { timeout: 8000 },
+    );
+
+    dialogEditor.focus();
+    await sleep(200);
+
+    if (dialogEditor.tagName === "TEXTAREA") {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      ).set;
+      nativeInputValueSetter.call(dialogEditor, replyText);
+      dialogEditor.dispatchEvent(new Event("input", { bubbles: true }));
+    } else {
+      try {
+        document.execCommand("insertText", false, replyText);
+      } catch (_) {
+        dialogEditor.textContent = replyText;
+        dialogEditor.dispatchEvent(
+          new InputEvent("input", {
+            data: replyText,
+            inputType: "insertText",
+            bubbles: true,
+          }),
+        );
+      }
+    }
+    await sleep(500);
+    appendLog(`  已输入回复内容: "${replyText.slice(0, 30)}${replyText.length > 30 ? "..." : ""}"`);
+
+    // 5. 点击弹窗中的"发送"按钮
+    //    通过"批量回复"标题定位弹窗，再在其中找"发送"
+    const dialogSendBtn = await waitFor(
+      () => {
+        for (const el of document.querySelectorAll("*")) {
+          if (directText(el) === "批量回复" && isVisible(el)) {
+            let p = el.parentElement;
+            while (p && p !== document.body) {
+              const rect = p.getBoundingClientRect();
+              if (rect.width > 300 && rect.height > 200) {
+                const btns = p.querySelectorAll("*");
+                for (const b of btns) {
+                  if (directText(b) === "发送" && isVisible(b)) {
+                    return b.closest("button, [role='button']") || b;
+                  }
+                }
+                break;
+              }
+              p = p.parentElement;
+            }
+          }
+        }
+        return null;
+      },
+      { timeout: 5000 },
+    );
+    realClick(dialogSendBtn);
+    appendLog("  已点击发送");
+
+    // 6. 等待弹窗关闭（"批量回复"标题消失）
+    await waitFor(
+      () => {
+        for (const el of document.querySelectorAll("*")) {
+          if (directText(el) === "批量回复" && isVisible(el)) return false;
+        }
+        return true;
+      },
+      { timeout: 10000 },
+    ).catch(() => {
+      appendLog("  等待弹窗关闭超时，继续执行");
+    });
+    await sleep(1000);
+
+    // 7. 点击"退出批量管理"
+    const exitBtn = await waitFor(
+      () => queryClickableByText("退出批量管理"),
+      { timeout: 5000 },
+    ).catch(() => null);
+    if (exitBtn) {
+      realClick(exitBtn);
+      await sleep(1000);
+    }
+
+    return { selected: toSelect };
+  }
+
+  async function runBatchReply() {
+    if (STATE.state === "running") {
+      appendLog("上一轮未结束，无法启动批量回复");
+      return;
+    }
+
+    const cfg = loadConfig();
+    const { loopCount, replyText, selectCount, intervalSec } = cfg.batchReply;
+
+    if (!replyText || !replyText.trim()) {
+      appendLog("批量回复内容为空，请先配置回复文字");
+      return;
+    }
+
+    STATE.state = "running";
+    STATE.abortRequested = false;
+    appendLog(`批量回复启动：循环 ${loopCount} 次，每次勾选 ${selectCount} 条`);
+
+    let totalReplied = 0;
+
+    try {
+      for (let i = 0; i < loopCount; i++) {
+        if (STATE.abortRequested) {
+          appendLog("收到暂停请求，批量回复停止");
+          break;
+        }
+
+        appendLog(`===== 批量回复第 ${i + 1}/${loopCount} 轮 =====`);
+
+        // 先过滤未回复
+        try {
+          await applyUnrepliedFilter();
+        } catch (e) {
+          appendLog(`  筛选未回复失败: ${e.message}`);
+          break;
+        }
+        await sleep(1000);
+
+        // 检查是否有评论可选
+        const commentItems = document.querySelectorAll(SELECTORS.commentActionItemSelector);
+        const hasComments = [...commentItems].some(
+          (el) => directText(el) === SELECTORS.replyBtnText && isVisible(el),
+        );
+        if (!hasComments) {
+          appendLog("  当前无未回复评论，批量回复结束");
+          break;
+        }
+
+        try {
+          const result = await batchReplyOnce(replyText.trim(), selectCount);
+          totalReplied += result.selected;
+          appendLog(`  第 ${i + 1} 轮完成，本轮回复 ${result.selected} 条`);
+        } catch (e) {
+          appendLog(`  第 ${i + 1} 轮失败: ${e.message}`);
+          // 尝试退出批量管理模式
+          const exitBtn = queryClickableByText("退出批量管理");
+          if (exitBtn) {
+            realClick(exitBtn);
+            await sleep(1000);
+          }
+          break;
+        }
+
+        if (i < loopCount - 1) {
+          const waitMs = (intervalSec || 30) * 1000;
+          appendLog(`  等待 ${intervalSec || 30} 秒后开始下一轮...`);
+          await sleep(waitMs);
+        }
+      }
+    } catch (e) {
+      appendLog(`批量回复异常: ${e.message}`);
+    } finally {
+      STATE.state = "idle";
+      appendLog(`批量回复结束，共回复约 ${totalReplied} 条评论`);
+    }
+  }
+
+  ar.batchReply = { batchReplyOnce, runBatchReply };
 
   // ============================================================
   // scheduler — chrome.alarms 精确定时（SW 管理 alarm，不受标签后台节流）
@@ -1387,6 +1742,16 @@
             </div>
           </details>
 
+          <details class="section">
+            <summary>批量回复设置</summary>
+            <div class="content">
+              <div class="row"><label>循环次数</label><input type="number" id="batchLoopCount" min="1" max="100" value="${cfg.batchReply.loopCount}">次</div>
+              <div class="row"><label>每次勾选</label><input type="number" id="batchSelectCount" min="1" max="50" value="${cfg.batchReply.selectCount}">条</div>
+              <div class="row"><label>轮次间隔</label><input type="number" id="batchIntervalSec" min="0" max="300" value="${cfg.batchReply.intervalSec}">秒</div>
+              <div class="row" style="flex-direction:column;align-items:flex-start;gap:4px"><label style="flex:0 0 auto">回复内容</label><textarea id="batchReplyText" style="min-height:60px" placeholder="输入批量回复的固定文字">${escapeHtml(cfg.batchReply.replyText)}</textarea></div>
+            </div>
+          </details>
+
           <details class="section" open>
             <summary>日志</summary>
             <div class="content"><div class="log" id="logBox">${escapeHtml(logBuffer.join("\n"))}</div></div>
@@ -1395,6 +1760,7 @@
 
         <div class="controls">
           <button class="btn primary" id="btnStart" ${st.state === "running" ? "disabled" : ""}>▶ 开始</button>
+          <button class="btn primary" id="btnBatchReply" ${st.state === "running" ? "disabled" : ""} style="background:#e86e00;border-color:#e86e00">▶ 批量回复</button>
           <button class="btn" id="btnPause" ${st.state !== "running" ? "disabled" : ""}>⏸ 暂停</button>
           <button class="btn" id="btnSave">💾 保存</button>
           <button class="btn" id="btnCopyLog">📋 复制日志</button>
@@ -1440,6 +1806,10 @@
     $("#btnStart").addEventListener("click", () =>
       runOnce({ trigger: "manual" }).then(() => render()),
     );
+    $("#btnBatchReply").addEventListener("click", () => {
+      saveFromUI();
+      runBatchReply().then(() => render());
+    });
     $("#btnPause").addEventListener("click", () => requestPause());
     $("#btnSave").addEventListener("click", saveFromUI);
     $("#btnCopyLog").addEventListener("click", () =>
@@ -1489,6 +1859,10 @@
     cfg.typingMaxMs = parseInt($("#typeMax").value, 10);
     cfg.replyDelayMinMs = parseInt($("#rdMin").value, 10);
     cfg.replyDelayMaxMs = parseInt($("#rdMax").value, 10);
+    cfg.batchReply.loopCount = Math.max(1, Math.min(100, parseInt($("#batchLoopCount").value, 10) || 3));
+    cfg.batchReply.selectCount = Math.max(1, Math.min(50, parseInt($("#batchSelectCount").value, 10) || 20));
+    cfg.batchReply.intervalSec = Math.max(0, Math.min(300, parseInt($("#batchIntervalSec").value, 10) || 30));
+    cfg.batchReply.replyText = $("#batchReplyText").value;
     saveConfig(cfg);
     appendLog("配置已保存");
 
